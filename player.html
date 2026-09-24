@@ -1,0 +1,88 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Player — MLB Archive</title>
+<link rel="stylesheet" href="css/style.css">
+</head>
+<body>
+
+<header class="site-header">
+  <div class="site-header__inner">
+    <div class="site-title"><a href="index.html">MLB Archive</a></div>
+    <nav class="site-nav">
+      <a href="teams.html">Teams</a>
+      <a href="players.html">Players</a>
+      <a href="scores.html">Scores</a>
+    </nav>
+  </div>
+</header>
+
+<main>
+  <div class="breadcrumb"><a href="players.html">Players</a> / <span id="crumb-name">…</span></div>
+
+  <div id="status" class="state-msg" hidden></div>
+
+  <div id="content" hidden>
+    <div class="hero">
+      <div class="hero__eyebrow" id="player-meta-line">—</div>
+      <h1 class="hero__title" id="player-name">—</h1>
+      <div class="hero__meta" id="player-badges"></div>
+    </div>
+
+    <section class="block" id="bio-block">
+      <h2 class="block__heading">Bio</h2>
+      <table class="trophy-table" id="bio-table"></table>
+    </section>
+
+    <div id="stats-status" class="state-msg" hidden></div>
+
+    <section class="block" id="hitting-block" hidden>
+      <h2 class="block__heading">Hitting</h2>
+      <div class="table-scroll">
+        <table class="ledger" id="hitting-table">
+          <thead><tr>
+            <th class="left">Year</th><th class="left">Team</th>
+            <th>G</th><th>AB</th><th>R</th><th>H</th><th>2B</th><th>3B</th><th>HR</th>
+            <th>RBI</th><th>BB</th><th>SO</th><th>SB</th><th>AVG</th>
+          </tr></thead>
+          <tbody id="hitting-body"></tbody>
+          <tfoot id="hitting-foot"></tfoot>
+        </table>
+      </div>
+    </section>
+
+    <section class="block" id="pitching-block" hidden>
+      <h2 class="block__heading">Pitching</h2>
+      <div class="table-scroll">
+        <table class="ledger" id="pitching-table">
+          <thead><tr>
+            <th class="left">Year</th><th class="left">Team</th>
+            <th>W</th><th>L</th><th>ERA</th><th>IP</th><th>H</th><th>R</th><th>ER</th>
+            <th>BB</th><th>SO</th><th>HR</th>
+          </tr></thead>
+          <tbody id="pitching-body"></tbody>
+          <tfoot id="pitching-foot"></tfoot>
+        </table>
+      </div>
+    </section>
+
+    <section class="block" id="fielding-block" hidden>
+      <h2 class="block__heading">Fielding</h2>
+      <div class="table-scroll">
+        <table class="ledger" id="fielding-table">
+          <thead><tr>
+            <th class="left">Year</th><th class="left">Team</th><th class="left">Pos</th>
+            <th>G</th><th>GS</th><th>Inn</th><th>PO/A</th><th>E</th><th>FLD%</th>
+          </tr></thead>
+          <tbody id="fielding-body"></tbody>
+        </table>
+      </div>
+    </section>
+  </div>
+</main>
+
+<script type="module" src="js/player.js"></script>
+</body>
+</html>

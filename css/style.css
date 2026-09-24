@@ -1,0 +1,313 @@
+/* ==========================================================================
+   MLB Archive — design tokens + shared styles
+   ========================================================================== */
+
+@import url('https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,400;9..144,500;9..144,600;9..144,700&family=IBM+Plex+Sans:wght@400;500;600&display=swap');
+
+:root {
+  /* backgrounds */
+  --bg-primary: #0a0e14;
+  --bg-secondary: #0c203c;
+  --bg-elevated: #13273f;
+
+  /* text */
+  --text-primary: #f9f8f4;
+  --text-secondary: #c4c8ce;
+  --text-tertiary: #7a828d;
+
+  /* accent */
+  --accent: #80061a;
+  --accent-hover: #a30a22;
+  --accent-press: #5c0413;
+
+  /* borders */
+  --border-subtle: #1c2c42;
+  --border-strong: #2a3b54;
+
+  /* status */
+  --success: #1f8a4c;
+  --warning: #c98a1b;
+
+  /* type */
+  --font-display: 'Fraunces', Georgia, serif;
+  --font-body: 'IBM Plex Sans', -apple-system, sans-serif;
+
+  --radius: 3px;
+}
+
+/* -------------------------------------------------------------------------
+   Reset + base
+   ------------------------------------------------------------------------- */
+*, *::before, *::after { box-sizing: border-box; }
+html { color-scheme: dark; }
+body {
+  margin: 0;
+  background: var(--bg-primary);
+  color: var(--text-primary);
+  font-family: var(--font-body);
+  font-size: 16px;
+  line-height: 1.5;
+  -webkit-font-smoothing: antialiased;
+}
+h1, h2, h3 { font-family: var(--font-display); font-weight: 600; margin: 0; }
+p { margin: 0 0 1em; color: var(--text-secondary); }
+a {
+  color: var(--text-primary);
+  text-decoration: none;
+  border-bottom: 1px solid transparent;
+}
+a:hover { border-bottom-color: currentColor; }
+a.accent-link {
+  color: var(--text-secondary);
+}
+a.accent-link:hover { color: var(--accent-hover); }
+:focus-visible {
+  outline: 2px solid var(--accent-hover);
+  outline-offset: 2px;
+}
+table { border-collapse: collapse; width: 100%; }
+button {
+  font-family: inherit;
+  cursor: pointer;
+}
+
+/* tabular numerals wherever numbers appear in a data context */
+.num, td.num, .stat-value {
+  font-variant-numeric: tabular-nums;
+  font-feature-settings: 'tnum' 1;
+}
+
+/* -------------------------------------------------------------------------
+   Layout shell
+   ------------------------------------------------------------------------- */
+.site-header {
+  border-bottom: 1px solid var(--border-subtle);
+  background: var(--bg-secondary);
+}
+.site-header__inner {
+  max-width: 920px;
+  margin: 0 auto;
+  padding: 18px 24px;
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 24px;
+}
+.site-title {
+  font-family: var(--font-display);
+  font-size: 1.15rem;
+  font-weight: 600;
+  letter-spacing: 0.01em;
+}
+.site-title a { color: var(--text-primary); }
+.site-nav {
+  display: flex;
+  gap: 20px;
+  font-size: 0.9rem;
+}
+.site-nav a { color: var(--text-secondary); }
+.site-nav a:hover { color: var(--text-primary); }
+
+main {
+  max-width: 920px;
+  margin: 0 auto;
+  padding: 40px 24px 96px;
+}
+
+.breadcrumb {
+  font-size: 0.85rem;
+  color: var(--text-tertiary);
+  margin-bottom: 28px;
+}
+.breadcrumb a { color: var(--text-tertiary); }
+.breadcrumb a:hover { color: var(--text-secondary); }
+
+/* -------------------------------------------------------------------------
+   Hero block
+   ------------------------------------------------------------------------- */
+.hero {
+  padding-bottom: 28px;
+  margin-bottom: 32px;
+  border-bottom: 2px solid var(--accent);
+}
+.hero__eyebrow {
+  font-size: 0.85rem;
+  color: var(--text-tertiary);
+  margin-bottom: 6px;
+}
+.hero__title {
+  font-size: clamp(2rem, 5vw, 3.2rem);
+  line-height: 1.05;
+  margin-bottom: 10px;
+}
+.hero__meta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px 18px;
+  font-size: 0.95rem;
+  color: var(--text-secondary);
+  align-items: center;
+}
+.hero__meta .dim { color: var(--text-tertiary); }
+
+.badge {
+  display: inline-block;
+  padding: 2px 9px;
+  border-radius: var(--radius);
+  font-size: 0.78rem;
+  border: 1px solid var(--border-strong);
+  color: var(--text-secondary);
+}
+.badge--active { border-color: var(--success); color: var(--success); }
+.badge--hof { border-color: var(--accent-hover); color: var(--accent-hover); background: rgba(128, 6, 26, 0.12); }
+.badge--deceased { color: var(--text-tertiary); }
+
+/* -------------------------------------------------------------------------
+   Sections
+   ------------------------------------------------------------------------- */
+section.block {
+  margin-bottom: 40px;
+}
+.block__heading {
+  font-size: 1.05rem;
+  font-weight: 600;
+  font-family: var(--font-body);
+  color: var(--text-primary);
+  margin-bottom: 14px;
+  padding-bottom: 8px;
+  border-bottom: 1px solid var(--border-subtle);
+}
+
+/* -------------------------------------------------------------------------
+   Ledger tables (stat lines, records)
+   ------------------------------------------------------------------------- */
+.ledger {
+  font-size: 0.9rem;
+}
+.ledger th, .ledger td {
+  padding: 8px 10px;
+  text-align: right;
+  border-bottom: 1px solid var(--border-subtle);
+  white-space: nowrap;
+}
+.ledger th:first-child, .ledger td:first-child,
+.ledger th.left, .ledger td.left {
+  text-align: left;
+}
+.ledger thead th {
+  font-weight: 500;
+  color: var(--text-tertiary);
+  font-size: 0.78rem;
+  border-bottom: 1px solid var(--border-strong);
+}
+.ledger tbody tr:hover { background: var(--bg-secondary); }
+.ledger tfoot td {
+  border-top: 2px solid var(--border-strong);
+  border-bottom: none;
+  font-weight: 600;
+  color: var(--text-primary);
+}
+.ledger .team-link { color: var(--text-secondary); }
+.ledger .team-link:hover { color: var(--accent-hover); }
+.table-scroll {
+  overflow-x: auto;
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius);
+}
+
+/* -------------------------------------------------------------------------
+   Trophy row
+   ------------------------------------------------------------------------- */
+.trophy-table {
+  font-size: 0.92rem;
+}
+.trophy-table tr { border-bottom: 1px solid var(--border-subtle); }
+.trophy-table td { padding: 10px 0; vertical-align: top; }
+.trophy-table td.trophy-label {
+  width: 160px;
+  color: var(--text-secondary);
+  font-weight: 500;
+}
+.trophy-table td.trophy-years {
+  color: var(--text-primary);
+}
+.trophy-years .year { color: var(--text-primary); }
+.trophy-empty { color: var(--text-tertiary); font-style: italic; }
+
+/* -------------------------------------------------------------------------
+   Timeline (name history)
+   ------------------------------------------------------------------------- */
+.timeline { position: relative; padding-left: 22px; }
+.timeline::before {
+  content: '';
+  position: absolute;
+  left: 4px; top: 6px; bottom: 6px;
+  width: 1px;
+  background: var(--border-strong);
+}
+.timeline li {
+  position: relative;
+  list-style: none;
+  padding-bottom: 16px;
+  font-size: 0.92rem;
+}
+.timeline li::before {
+  content: '';
+  position: absolute;
+  left: -22px; top: 5px;
+  width: 8px; height: 8px;
+  border-radius: 50%;
+  background: var(--bg-primary);
+  border: 2px solid var(--accent);
+}
+.timeline .yr { color: var(--text-tertiary); margin-right: 10px; }
+
+/* -------------------------------------------------------------------------
+   Buttons / interactive
+   ------------------------------------------------------------------------- */
+.btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  background: transparent;
+  color: var(--text-secondary);
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius);
+  padding: 9px 16px;
+  font-size: 0.9rem;
+}
+.btn:hover {
+  border-color: var(--accent-hover);
+  color: var(--text-primary);
+}
+.btn:active { background: var(--accent-press); }
+.btn[disabled] { opacity: 0.5; cursor: default; }
+
+.spinner-text {
+  color: var(--text-tertiary);
+  font-size: 0.88rem;
+}
+
+.state-msg {
+  padding: 40px 0;
+  color: var(--text-tertiary);
+  font-size: 0.95rem;
+}
+.state-msg--error { color: var(--accent-hover); }
+
+/* -------------------------------------------------------------------------
+   Group headers inside long tables (e.g. stat-by-year grouped by team)
+   ------------------------------------------------------------------------- */
+.group-label td {
+  padding-top: 18px;
+  color: var(--text-tertiary);
+  font-size: 0.78rem;
+  border-bottom: 1px solid var(--border-strong) !important;
+  text-align: left !important;
+}
+
+@media (max-width: 640px) {
+  main { padding: 28px 16px 72px; }
+  .site-header__inner { padding: 14px 16px; flex-direction: column; align-items: flex-start; gap: 8px; }
+  .trophy-table td.trophy-label { width: 110px; }
+}

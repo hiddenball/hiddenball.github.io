@@ -1,0 +1,74 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Team — MLB Archive</title>
+<link rel="stylesheet" href="css/style.css">
+</head>
+<body>
+
+<header class="site-header">
+  <div class="site-header__inner">
+    <div class="site-title"><a href="index.html">MLB Archive</a></div>
+    <nav class="site-nav">
+      <a href="teams.html">Teams</a>
+      <a href="players.html">Players</a>
+      <a href="scores.html">Scores</a>
+    </nav>
+  </div>
+</header>
+
+<main>
+  <div class="breadcrumb"><a href="teams.html">Teams</a> / <span id="crumb-name">…</span></div>
+
+  <div id="status" class="state-msg" hidden></div>
+
+  <div id="content" hidden>
+    <div class="hero">
+      <div class="hero__eyebrow" id="team-league">—</div>
+      <h1 class="hero__title" id="team-name">—</h1>
+      <div class="hero__meta">
+        <span id="team-division">—</span>
+      </div>
+    </div>
+
+    <section class="block">
+      <h2 class="block__heading">Titles</h2>
+      <table class="trophy-table" id="trophy-table"></table>
+    </section>
+
+    <section class="block" id="history-block">
+      <h2 class="block__heading">Franchise history</h2>
+      <ul class="timeline" id="name-history"></ul>
+    </section>
+
+    <section class="block">
+      <h2 class="block__heading">Season by season</h2>
+      <p style="font-size:0.88rem;color:var(--text-tertiary);margin-bottom:14px;">
+        Loads on demand — checks all 46 seasons for this team's record.
+      </p>
+      <button class="btn" id="load-seasons-btn">Load season-by-season record</button>
+      <div id="seasons-status" class="state-msg" hidden style="padding:20px 0;"></div>
+      <div class="table-scroll" id="seasons-wrap" hidden>
+        <table class="ledger" id="seasons-table">
+          <thead>
+            <tr>
+              <th class="left">Year</th>
+              <th class="left">League</th>
+              <th class="left">Division</th>
+              <th>W</th>
+              <th>L</th>
+              <th>Pct</th>
+            </tr>
+          </thead>
+          <tbody id="seasons-body"></tbody>
+        </table>
+      </div>
+    </section>
+  </div>
+</main>
+
+<script type="module" src="js/team.js"></script>
+</body>
+</html>
