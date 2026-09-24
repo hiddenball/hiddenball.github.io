@@ -1,0 +1,63 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>MLB Archive</title>
+<link rel="stylesheet" href="css/style.css">
+</head>
+<body>
+
+<header class="site-header">
+  <div class="site-header__inner">
+    <div class="site-title"><a href="index.html">MLB Archive</a></div>
+    <nav class="site-nav">
+      <a href="teams.html">Teams</a>
+      <a href="players.html">Players</a>
+      <a href="scores.html">Scores</a>
+    </nav>
+  </div>
+</header>
+
+<main>
+  <div class="hero" style="border-bottom: 2px solid var(--accent);">
+    <div class="hero__eyebrow">1980 &ndash; present</div>
+    <h1 class="hero__title">Forty-six seasons, every box score.</h1>
+    <div class="hero__meta">
+      <a class="accent-link" href="teams.html">Browse teams</a>
+      <span class="dim">·</span>
+      <a class="accent-link" href="players.html">Browse players</a>
+      <span class="dim">·</span>
+      <a class="accent-link" href="scores.html">Browse scores</a>
+    </div>
+  </div>
+
+  <section class="block">
+    <h2 class="block__heading" id="standings-heading">Standings</h2>
+    <div id="standings-status" class="state-msg" hidden></div>
+    <div id="standings-wrap" hidden></div>
+  </section>
+
+  <section class="block">
+    <h2 class="block__heading" id="games-heading">Recent games</h2>
+    <div id="games-status" class="state-msg" hidden></div>
+    <div class="table-scroll" id="games-wrap" hidden>
+      <table class="ledger" id="games-table">
+        <thead><tr>
+          <th class="left">Date</th><th class="left">Away</th><th class="left">Home</th><th>Score</th>
+        </tr></thead>
+        <tbody id="games-body"></tbody>
+      </table>
+    </div>
+  </section>
+
+  <section class="block">
+    <h2 class="block__heading" id="tx-heading">Recent transactions</h2>
+    <div id="tx-status" class="state-msg" hidden></div>
+    <ul id="tx-list" class="timeline" hidden></ul>
+  </section>
+</main>
+
+<script type="module" src="js/index.js"></script>
+</body>
+</html>
