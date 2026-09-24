@@ -131,3 +131,52 @@ export function groupBy(rows, keyFn) {
   }
   return map;
 }
+
+// --------------------------------------------------------------------------
+// Shared team-name lookups (used by any page that lists games/standings/etc
+// by team id and wants a readable name instead of a bare number).
+// --------------------------------------------------------------------------
+
+/**
+ * Returns a lookup function bound to one cache, so repeated calls for the
+ * same team id across one page load only fetch that team's file once.
+ * Uses the team's CURRENT name, not its name at the time of play — a
+ * deliberate simplification; the team page itself shows full name history.
+ */
+export function createTeamNameResolver(manifest) {
+  const cache = new Map();
+  return async function resolveTeamName(teamId) {
+    if (teamId === null || teamId === undefined) return '—';
+    if (cache.has(teamId)) return cache.get(teamId);
+    let name;
+    try {
+      const team = await fetchCoreRecord(manifest, 'teams', teamId);
+      name = team ? team.currentName : `Team ${teamId}`;
+    } catch (_) {
+      name = `Team ${teamId}`;
+    }
+    cache.set(teamId, name);
+    return name;
+  };
+}
+
+/**
+ * Walks backward year by year from `startYear` (defaults to today) until it
+ * finds a season that actually has the requested file, and returns both the
+ * year and the parsed data. Returns null if nothing is found down to
+ * `floorYear` (default 1980). Used for "latest available" widgets, since the
+ * most recent year doesn't always have every file yet (e.g. the current
+ * season has no season-wide schedule file — see index.js for the specific
+ * case this matters for).
+ */
+export async function fetchLatestAvailable(manifest, filename, { startYear, floorYear = 1980 } = {}) {
+  let year = startYear || new Date().getFullYear();
+  while (year >= floorYear) {
+    try {
+      const data = await fetchSeasonFile(manifest, year, filename);
+      if (data) return { year, data };
+    } catch (_) { /* try the previous year */ }
+    year--;
+  }
+  return null;
+}
