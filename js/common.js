@@ -180,3 +180,96 @@ export async function fetchLatestAvailable(manifest, filename, { startYear, floo
   }
   return null;
 }
+
+// --------------------------------------------------------------------------
+// Browse/index pages (Teams, Players, Managers, Ballparks)
+// --------------------------------------------------------------------------
+
+/** Fetches one of the small [{id,name},...] lookup files in mlb-data-core. */
+export async function fetchCoreIndex(manifest, name) {
+  const url = `${coreBaseUrl(manifest)}/data/index/${name}.json`;
+  const data = await fetchJSONOrNull(url);
+  return data || [];
+}
+
+/**
+ * Wires a search-filtered grid of links from a [{id,name},...] index.
+ * Renders at most `maxRender` entries at a time (the players index alone has
+ * over 10,000 rows — never render all of them as DOM nodes at once).
+ *
+ * options:
+ *   entries      - the [{id,name}, ...] array (already fetched by the caller)
+ *   containerEl  - element to fill with .entity-card links
+ *   searchEl     - the <input>, or null/undefined if the page has no search box
+ *   hrefFor(e)   - (entry) => href string
+ *   maxRender    - cap on rendered cards (default 100)
+ *   emptyMessage - shown when a search matches nothing
+ */
+export function initEntityBrowser({ entries, containerEl, searchEl, hrefFor, maxRender = 100, emptyMessage = 'No matches.' }) {
+  function render(query) {
+    const q = (query || '').trim().toLowerCase();
+    const matches = q ? entries.filter(e => e.name.toLowerCase().includes(q)) : entries;
+    const shown = matches.slice(0, maxRender);
+
+    if (shown.length === 0) {
+      containerEl.innerHTML = `<p class="state-msg" style="padding:12px 0;">${emptyMessage}</p>`;
+      return;
+    }
+
+    containerEl.innerHTML = shown.map(e => `
+      <a class="entity-card" href="${hrefFor(e)}">
+        <span class="entity-card__name">${e.name}</span>
+      </a>`).join('');
+
+    if (matches.length > maxRender) {
+      containerEl.insertAdjacentHTML('beforeend',
+        `<p class="state-msg" style="padding:12px 0;width:100%;">Showing ${maxRender} of ${matches.length} matches — keep typing to narrow it down.</p>`);
+    }
+  }
+
+  render('');
+
+  if (searchEl) {
+    let debounceTimer = null;
+    searchEl.addEventListener('input', () => {
+      clearTimeout(debounceTimer);
+      debounceTimer = setTimeout(() => render(searchEl.value), 120);
+    });
+  }
+}
+
+// --------------------------------------------------------------------------
+// Logo / image fallback
+// Not every id has a custom image (e.g. historical/Negro League team ids
+// that predate the 30 active franchises). Tries the specific file first;
+// if it 404s, swaps to a single shared default instead of showing a
+// browser's broken-image icon. If the default ALSO fails, hides the
+// element entirely rather than looping.
+// --------------------------------------------------------------------------
+export function setImgWithFallback(imgEl, primarySrc, fallbackSrc) {
+  let triedFallback = false;
+  imgEl.classList.remove('is-visible');
+  imgEl.onerror = () => {
+    if (!triedFallback && fallbackSrc) {
+      triedFallback = true;
+      imgEl.src = fallbackSrc;
+    } else {
+      imgEl.onerror = null;
+      imgEl.classList.remove('is-visible');
+      imgEl.removeAttribute('src');
+    }
+  };
+  imgEl.onload = () => imgEl.classList.add('is-visible');
+  imgEl.src = primarySrc;
+}
+
+/**
+ * Sets a hero's background image with a fixed dark overlay layered on top,
+ * so the hero's text stays readable regardless of how bright or busy the
+ * banner image is underneath. If the banner 404s, only the (harmless)
+ * gradient renders - no broken-image icon is possible with a CSS background.
+ */
+export function setHeroBanner(heroEl, bannerSrc) {
+  heroEl.style.backgroundImage =
+    `linear-gradient(rgba(10,14,20,0.55), rgba(10,14,20,0.88)), url("${bannerSrc}")`;
+}

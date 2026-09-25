@@ -1,6 +1,7 @@
 import {
   loadManifest, fetchCoreRecord, fetchSeasonFile,
   qs, setStatus, clearStatus, fmtOrDash,
+  setImgWithFallback, setHeroBanner,
 } from './common.js';
 
 const statusEl = document.getElementById('status');
@@ -50,6 +51,13 @@ function renderTeam(team) {
   document.getElementById('team-name').textContent = team.currentName;
   document.getElementById('team-league').textContent = team.league || '—';
   document.getElementById('team-division').textContent = team.division || '—';
+
+  setImgWithFallback(
+    document.getElementById('team-logo'),
+    `assets/logos/${team.id}.webp`,
+    'assets/logos/default.webp'
+  );
+  setHeroBanner(document.getElementById('hero'), `assets/banners/${team.id}.webp`);
 
   renderTrophies(team.trophies || {});
   renderNameHistory(team.nameHistory || [], team.currentName);
