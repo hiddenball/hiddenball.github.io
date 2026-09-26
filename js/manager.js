@@ -1,6 +1,7 @@
 import {
   loadManifest, fetchCoreRecord, fetchSeasonFile, createTeamNameResolver,
   qs, setStatus, clearStatus, fmtOrDash,
+  setImgWithFallback,
 } from './common.js';
 
 const statusEl = document.getElementById('status');
@@ -62,6 +63,14 @@ function renderBio(m) {
   bio.innerHTML = rows.map(([label, val]) =>
     `<tr><td class="trophy-label">${label}</td><td class="trophy-years">${val}</td></tr>`
   ).join('');
+
+  // Optional - added after the original page contract. Not every build of
+  // manager.html will have this element yet, and that's fine: only touch it
+  // if it exists, so this never breaks a page that predates this addition.
+  const photoEl = document.getElementById('manager-photo');
+  if (photoEl) {
+    setImgWithFallback(photoEl, `assets/managers/${m.id}.webp`, 'assets/managers/default.webp');
+  }
 }
 
 async function loadCareerRecord(manifest, managerId, manager) {

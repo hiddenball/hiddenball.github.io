@@ -1,6 +1,7 @@
 import {
   loadManifest, fetchCoreRecord, fetchSeasonFile,
   qs, setStatus, clearStatus, fmtDate, fmtOrDash, fmtAvg, fmtNum,
+  setImgWithFallback,
 } from './common.js';
 
 const statusEl = document.getElementById('status');
@@ -144,6 +145,23 @@ async function loadCareerStats(manifest, playerId, player) {
   if (hitting.length) await renderHitting(manifest, hitting);
   if (pitching.length) await renderPitching(manifest, pitching);
   if (fielding.length) await renderFielding(manifest, fielding);
+
+  renderPositionPhoto(fielding);
+}
+
+/**
+ * Uses the player's most recent season's fielding position as a generic
+ * avatar (there's no per-player photo, only 10 position-based images).
+ * If the player has no fielding rows at all (rare - some DH-only careers),
+ * no image request is made at all; the photo stays hidden rather than
+ * requesting a file that would just 404.
+ */
+function renderPositionPhoto(fielding) {
+  if (fielding.length === 0) return;
+  const mostRecent = fielding.slice().sort((a, b) => b.year - a.year)[0];
+  const pos = mostRecent.stat && mostRecent.stat.position ? mostRecent.stat.position.abbreviation : null;
+  if (!pos) return;
+  setImgWithFallback(document.getElementById('player-photo'), `assets/positions/${pos}.webp`);
 }
 
 async function renderHitting(manifest, rows) {
