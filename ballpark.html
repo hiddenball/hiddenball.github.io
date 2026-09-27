@@ -1,0 +1,54 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Ballpark — MLB Archive</title>
+<link rel="stylesheet" href="css/style.css">
+</head>
+<body>
+
+<header class="site-header">
+  <div class="site-header__inner">
+    <div class="site-title"><a href="index.html">MLB Archive</a></div>
+    <nav class="site-nav">
+      <a href="teams.html">Teams</a>
+      <a href="players.html">Players</a>
+      <a href="scores.html">Scores</a>
+    </nav>
+  </div>
+</header>
+
+<main>
+  <div class="breadcrumb"><a href="ballparks.html">Ballparks</a> / <span id="crumb-name">…</span></div>
+  <div id="status" class="state-msg" hidden></div>
+  <div id="content" hidden>
+    <div class="hero">
+      <h1 class="hero__title" id="ballpark-name">—</h1>
+    </div>
+    <section class="block" id="history-block">
+      <h2 class="block__heading">Name history</h2>
+      <ul class="timeline" id="name-history"></ul>
+    </section>
+    <section class="block">
+      <h2 class="block__heading">Games hosted</h2>
+      <p style="font-size:0.88rem;color:var(--text-tertiary);margin-bottom:14px;">
+        Loads on demand — checks all 46 seasons.
+      </p>
+      <button class="btn" id="load-games-btn">Load games hosted</button>
+      <div id="games-status" class="state-msg" hidden></div>
+      <div class="table-scroll" id="games-wrap" hidden>
+        <table class="ledger" id="games-table">
+          <thead><tr>
+            <th class="left">Date</th><th class="left">Away</th><th class="left">Home</th><th>Score</th>
+          </tr></thead>
+          <tbody id="games-body"></tbody>
+        </table>
+      </div>
+    </section>
+  </div>
+</main>
+
+<script type="module" src="js/ballpark.js"></script>
+</body>
+</html>

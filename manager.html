@@ -1,0 +1,59 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Manager — MLB Archive</title>
+<link rel="stylesheet" href="css/style.css">
+</head>
+<body>
+
+<header class="site-header">
+  <div class="site-header__inner">
+    <div class="site-title"><a href="index.html">MLB Archive</a></div>
+    <nav class="site-nav">
+      <a href="teams.html">Teams</a>
+      <a href="players.html">Players</a>
+      <a href="scores.html">Scores</a>
+    </nav>
+  </div>
+</header>
+
+<main>
+  <div class="breadcrumb"><a href="managers.html">Managers</a> / <span id="crumb-name">…</span></div>
+
+  <div id="status" class="state-msg" hidden></div>
+
+  <div id="content" hidden>
+    <div class="hero">
+      <img id="manager-photo" class="manager-photo" alt="">
+      <div class="hero__eyebrow" id="manager-meta-line">—</div>
+      <h1 class="hero__title" id="manager-name">—</h1>
+      <div class="hero__meta" id="manager-badges"></div>
+    </div>
+
+    <section class="block">
+      <h2 class="block__heading">Career</h2>
+      <table class="trophy-table" id="bio-table"></table>
+    </section>
+
+    <div id="stats-status" class="state-msg" hidden></div>
+
+    <section class="block" id="record-block" hidden>
+      <h2 class="block__heading">Season by season</h2>
+      <div class="table-scroll">
+        <table class="ledger" id="record-table">
+          <thead><tr>
+            <th class="left">Year</th><th class="left">Team</th><th>W</th><th>L</th><th>Pct</th>
+          </tr></thead>
+          <tbody id="record-body"></tbody>
+          <tfoot id="record-foot"></tfoot>
+        </table>
+      </div>
+    </section>
+  </div>
+</main>
+
+<script type="module" src="js/manager.js"></script>
+</body>
+</html>

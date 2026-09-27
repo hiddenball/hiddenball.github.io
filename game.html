@@ -1,0 +1,55 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Game — MLB Archive</title>
+<link rel="stylesheet" href="css/style.css">
+</head>
+<body>
+
+<header class="site-header">
+  <div class="site-header__inner">
+    <div class="site-title"><a href="index.html">MLB Archive</a></div>
+    <nav class="site-nav">
+      <a href="teams.html">Teams</a>
+      <a href="players.html">Players</a>
+      <a href="scores.html">Scores</a>
+    </nav>
+  </div>
+</header>
+
+<main>
+  <div id="status" class="state-msg" hidden></div>
+  <div id="content" hidden>
+    <div class="hero">
+      <div class="hero__eyebrow" id="game-date">—</div>
+      <h1 class="hero__title" id="game-matchup">—</h1>
+    </div>
+
+    <section class="block">
+      <h2 class="block__heading">Linescore</h2>
+      <div class="table-scroll"><table class="ledger" id="linescore-table"></table></div>
+    </section>
+
+    <section class="block">
+      <h2 class="block__heading">Box score</h2>
+      <div id="boxscore-away"></div>
+      <div id="boxscore-home"></div>
+    </section>
+
+    <section class="block">
+      <h2 class="block__heading">Win probability</h2>
+      <div id="winprob-chart"></div>
+    </section>
+
+    <section class="block">
+      <h2 class="block__heading">Play by play</h2>
+      <div id="playbyplay-list"></div>
+    </section>
+  </div>
+</main>
+
+<script type="module" src="js/game.js"></script>
+</body>
+</html>

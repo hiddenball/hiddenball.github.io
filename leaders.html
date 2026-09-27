@@ -1,0 +1,40 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Leaders — MLB Archive</title>
+<link rel="stylesheet" href="css/style.css">
+</head>
+<body>
+
+<header class="site-header">
+  <div class="site-header__inner">
+    <div class="site-title"><a href="index.html">MLB Archive</a></div>
+    <nav class="site-nav">
+      <a href="teams.html">Teams</a>
+      <a href="players.html">Players</a>
+      <a href="scores.html">Scores</a>
+    </nav>
+  </div>
+</header>
+
+<main>
+  <div id="status" class="state-msg" hidden></div>
+  <div id="content" hidden>
+    <h1 class="hero__title">Leaders</h1>
+    <div id="leader-controls"></div>
+    <div class="table-scroll">
+      <table class="ledger" id="leaders-table">
+        <thead><tr>
+          <th>Rank</th><th class="left">Player</th><th>Value</th>
+        </tr></thead>
+        <tbody id="leaders-body"></tbody>
+      </table>
+    </div>
+  </div>
+</main>
+
+<script type="module" src="js/leaders.js"></script>
+</body>
+</html>

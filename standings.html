@@ -1,0 +1,35 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Standings — MLB Archive</title>
+<link rel="stylesheet" href="css/style.css">
+</head>
+<body>
+
+<header class="site-header">
+  <div class="site-header__inner">
+    <div class="site-title"><a href="index.html">MLB Archive</a></div>
+    <nav class="site-nav">
+      <a href="teams.html">Teams</a>
+      <a href="players.html">Players</a>
+      <a href="scores.html">Scores</a>
+    </nav>
+  </div>
+</header>
+
+<main>
+  <div id="status" class="state-msg" hidden></div>
+  <div id="content" hidden>
+    <div class="hero">
+      <h1 class="hero__title" id="standings-title">—</h1>
+    </div>
+    <div id="year-picker"></div>
+    <div id="standings-body-wrap"></div>
+  </div>
+</main>
+
+<script type="module" src="js/standings.js"></script>
+</body>
+</html>

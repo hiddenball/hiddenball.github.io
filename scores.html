@@ -1,0 +1,41 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Scores — MLB Archive</title>
+<link rel="stylesheet" href="css/style.css">
+</head>
+<body>
+
+<header class="site-header">
+  <div class="site-header__inner">
+    <div class="site-title"><a href="index.html">MLB Archive</a></div>
+    <nav class="site-nav">
+      <a href="teams.html">Teams</a>
+      <a href="players.html">Players</a>
+      <a href="scores.html">Scores</a>
+    </nav>
+  </div>
+</header>
+
+<main>
+  <div id="status" class="state-msg" hidden></div>
+  <div id="content" hidden>
+    <div class="hero"><h1 class="hero__title">Scores</h1></div>
+    <div id="year-picker"></div>
+    <input id="date-filter" type="date">
+    <div class="table-scroll">
+      <table class="ledger" id="scores-table">
+        <thead><tr>
+          <th class="left">Date</th><th class="left">Away</th><th class="left">Home</th><th>Score</th><th class="left">Status</th>
+        </tr></thead>
+        <tbody id="scores-body"></tbody>
+      </table>
+    </div>
+  </div>
+</main>
+
+<script type="module" src="js/scores.js"></script>
+</body>
+</html>
