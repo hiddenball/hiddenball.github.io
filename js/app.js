@@ -96,6 +96,12 @@ function qs(name) {
   return new URLSearchParams(window.location.search).get(name);
 }
 
+// Builds a link to game.html. The year is required because each season's data lives in a different repo.
+function gameHref(g) {
+  const year = g.season || (g.date ? String(g.date).slice(0, 4) : '');
+  return `game.html?id=${g.gamePk}&year=${year}`;
+}
+
 function fmtDate(isoDate) {
   if (!isoDate) return '—';
   const d = new Date(isoDate);
@@ -409,7 +415,7 @@ function runIndexPage() {
         <td class="left">${fmtDate(g.date)}</td>
         <td class="left"><a class="team-link" href="team.html?id=${g.awayTeamId}">${awayName}</a></td>
         <td class="left"><a class="team-link" href="team.html?id=${g.homeTeamId}">${homeName}</a></td>
-        <td class="num"><a href="game.html?id=${g.gamePk}">${g.awayScore}&ndash;${g.homeScore}</a></td>
+        <td class="num"><a href="${gameHref(g)}">${g.awayScore}&ndash;${g.homeScore}</a></td>
       </tr>`);
     }
     body.innerHTML = rows.join('');
@@ -1347,7 +1353,7 @@ function runBallparkPage() {
         <td class="left">${fmtDate(g.date)}</td>
         <td class="left"><a class="team-link" href="team.html?id=${g.awayTeamId}">${awayName}</a></td>
         <td class="left"><a class="team-link" href="team.html?id=${g.homeTeamId}">${homeName}</a></td>
-        <td class="num"><a href="game.html?id=${g.gamePk}">${g.awayScore}&ndash;${g.homeScore}</a></td>
+        <td class="num"><a href="${gameHref(g)}">${g.awayScore}&ndash;${g.homeScore}</a></td>
       </tr>`);
     }
     body.innerHTML = rows.join('');
@@ -1623,7 +1629,7 @@ function runScoresPage() {
         <td class="left">${fmtDate(g.date)}</td>
         <td class="left"><a class="team-link" href="team.html?id=${g.awayTeamId}">${awayName}</a></td>
         <td class="left"><a class="team-link" href="team.html?id=${g.homeTeamId}">${homeName}</a></td>
-        <td class="num"><a href="game.html?id=${g.gamePk}">${g.awayScore}&ndash;${g.homeScore}</a></td>
+        <td class="num"><a href="${gameHref(g)}">${g.awayScore}&ndash;${g.homeScore}</a></td>
         <td class="left">${g.status}</td>
       </tr>`);
     }
@@ -1803,7 +1809,7 @@ function runPostseasonPage() {
         <td class="left">${fmtDate(g.date)}</td>
         <td class="left"><a class="team-link" href="team.html?id=${g.awayTeamId}">${awayName}</a></td>
         <td class="left"><a class="team-link" href="team.html?id=${g.homeTeamId}">${homeName}</a></td>
-        <td class="num"><a href="game.html?id=${g.gamePk}">${g.awayScore}&ndash;${g.homeScore}</a></td>
+        <td class="num"><a href="${gameHref(g)}">${g.awayScore}&ndash;${g.homeScore}</a></td>
       </tr>`);
     }
     body.innerHTML = rows.join('');
