@@ -2345,25 +2345,44 @@ function runGamePage() {
 
   async function main() {
     const gamePk = qs('id');
-    const year = qs('year');
+    let year = qs('year');
 
-    if (!gamePk || !year) {
-      setStatus(statusEl, 'A game id and year are both required, e.g. game.html?id=413649&year=2015 '
-        + '(the year is needed to know which repo the game lives in).', true);
+    if (!gamePk) {
+      setStatus(statusEl, 'A game id is required, e.g. game.html?id=413649&year=2015', true);
       return;
     }
 
     let manifest, game;
     try {
       manifest = await loadManifest();
-      game = await fetchSeasonFile(manifest, year, `games/${gamePk}.json`);
+      if (year) {
+        game = await fetchSeasonFile(manifest, year, `games/${gamePk}.json`);
+      } else {
+        // No year in the link: search seasons (newest first) until the game turns up.
+        setStatus(statusEl, 'Looking up this game…');
+        const thisYear = new Date().getFullYear();
+        const years = [];
+        for (let y = thisYear; y >= 1980; y--) years.push(y);
+        let cursor = 0;
+        const CONCURRENCY = 6;
+        async function worker() {
+          while (cursor < years.length && !game) {
+            const y = years[cursor++];
+            try {
+              const g = await fetchSeasonFile(manifest, y, `games/${gamePk}.json`);
+              if (g && !game) { game = g; year = y; }
+            } catch (_) { /* skip seasons that fail */ }
+          }
+        }
+        await Promise.all(Array.from({ length: CONCURRENCY }, worker));
+      }
     } catch (err) {
       setStatus(statusEl, `Couldn't load this game right now (${err.message}). Try refreshing.`, true);
       return;
     }
 
     if (!game) {
-      setStatus(statusEl, `No game found with id "${gamePk}" in ${year}.`, true);
+      setStatus(statusEl, `No game found with id "${gamePk}"${year ? ` in ${year}` : ''}.`, true);
       return;
     }
 
