@@ -398,3 +398,76 @@ section.block {
   outline: 2px solid var(--accent-hover);
   outline-offset: 1px;
 }
+
+/* -------------------------------------------------------------------------
+   Mobile / vertical devices
+   Added: purely additive — nothing above this line was changed. Covers what
+   the single existing 640px block didn't: horizontal-overflow prevention,
+   a wrapping/scrollable nav, touch-scroll momentum on wide tables, a second
+   breakpoint for small phones, and a fallback so any table not wrapped in
+   .table-scroll still scrolls instead of blowing out the layout.
+   ------------------------------------------------------------------------- */
+
+html, body {
+  max-width: 100%;
+  overflow-x: hidden;
+}
+
+img { max-width: 100%; height: auto; }
+
+.table-scroll {
+  -webkit-overflow-scrolling: touch;
+}
+
+/* Safety net: a bare table outside .table-scroll still scrolls on narrow
+   screens instead of forcing the whole page wider than the viewport. */
+@media (max-width: 640px) {
+  table:not(.table-scroll table) {
+    display: block;
+    overflow-x: auto;
+    -webkit-overflow-scrolling: touch;
+    white-space: nowrap;
+  }
+}
+
+@media (max-width: 640px) {
+  .site-nav {
+    width: 100%;
+    overflow-x: auto;
+    -webkit-overflow-scrolling: touch;
+    flex-wrap: nowrap;
+    gap: 16px;
+    padding-bottom: 2px;
+  }
+  .site-nav::-webkit-scrollbar { display: none; }
+
+  .hero__meta { gap: 6px 12px; font-size: 0.88rem; }
+
+  .ledger { font-size: 0.82rem; }
+  .ledger th, .ledger td { padding: 6px 8px; }
+
+  .entity-grid {
+    grid-template-columns: repeat(auto-fill, minmax(140px, 1fr));
+    gap: 8px;
+  }
+  .entity-card { padding: 12px; }
+
+  .btn { padding: 8px 14px; font-size: 0.85rem; }
+}
+
+/* Small phones (iPhone SE/mini and narrower) */
+@media (max-width: 400px) {
+  .hero__title { font-size: 1.7rem; }
+
+  .trophy-table { display: block; }
+  .trophy-table tbody, .trophy-table tr { display: block; }
+  .trophy-table tr {
+    padding: 10px 0;
+  }
+  .trophy-table td { display: block; padding: 2px 0; }
+  .trophy-table td.trophy-label { width: auto; }
+
+  .entity-grid { grid-template-columns: 1fr 1fr; }
+
+  #team-search, #player-search, #manager-search { max-width: 100%; }
+}
