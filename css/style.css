@@ -584,6 +584,7 @@ a.l5--w:hover { background: rgba(102, 204, 145, 0.28); border-color: rgba(102, 2
 a.l5--l { background: rgba(238, 115, 125, 0.16); border-color: rgba(238, 115, 125, 0.32); color: #f2949c; }
 a.l5--l:hover { background: rgba(238, 115, 125, 0.28); border-color: rgba(238, 115, 125, 0.55); }
 a.l5--t { background: rgba(196, 200, 206, 0.12); border-color: rgba(196, 200, 206, 0.28); color: var(--text-secondary); }
+.ledger th.l5-col, .ledger td.l5-cell { text-align: center; }
 .l5-cell .dim { color: var(--text-tertiary); }
 .l5-note {
   margin: 12px 0 0;
@@ -593,4 +594,14 @@ a.l5--t { background: rgba(196, 200, 206, 0.12); border-color: rgba(196, 200, 20
 @media (max-width: 640px) {
   .l5-strip { gap: 3px; }
   a.l5 { width: 22px; height: 22px; font-size: 0.7rem; }
+}
+
+/* -------------------------------------------------------------------------
+   Team names: full name normally, nickname only on vertical (portrait) /
+   narrow screens. Rendered by teamLinkHtml().
+   ------------------------------------------------------------------------- */
+.tn-short { display: none; }
+@media (max-width: 640px), (orientation: portrait) and (max-width: 900px) {
+  .tn-full { display: none; }
+  .tn-short { display: inline; }
 }
