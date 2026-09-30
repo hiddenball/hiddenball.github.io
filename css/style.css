@@ -527,7 +527,7 @@ a.team-chip:hover .team-chip__name { color: var(--accent-hover); }
 
 /* -------------------------------------------------------------------------
    Standings divisions (East / Central / West)
-   Small label above each division's table (no longer used by the standings tables).
+   Small label above each division's table; rendered by standingsTableHtml().
    ------------------------------------------------------------------------- */
 .division-label {
   margin: 14px 0 6px;
