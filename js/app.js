@@ -314,6 +314,80 @@ function teamLinkHtml(teamId, name) {
 }
 
 
+// --------------------------------------------------------------------------
+// Divisions (East / Central / West)
+// Standings data is grouped by league only, so the division is worked out from
+// the team id + season using MLB's real alignment for each era:
+//   1980-1993  two divisions per league (East, West)
+//   1994-1997  three divisions (East, Central, West)
+//   1998-2012  Brewers move to NL Central; Astros stay in NL Central
+//   2013+      Astros move to AL West (5 teams per division)
+// A team that isn't in the map for that year lands in an "Other" group at the
+// end instead of disappearing.
+// --------------------------------------------------------------------------
+const DIVISION_ERAS = [
+  { from: 1980, to: 1993,
+    East:    [110, 111, 114, 116, 158, 147, 141, 112, 121, 143, 134, 138, 120, 146],
+    Central: [],
+    West:    [108, 118, 142, 133, 136, 140, 145, 144, 113, 117, 119, 135, 137, 115] },
+  { from: 1994, to: 1997,
+    East:    [110, 111, 147, 141, 116, 144, 120, 121, 143, 146],
+    Central: [145, 114, 118, 142, 158, 112, 113, 117, 134, 138],
+    West:    [108, 133, 136, 140, 115, 119, 135, 137] },
+  { from: 1998, to: 2012,
+    East:    [110, 111, 147, 139, 141, 144, 146, 121, 143, 120],
+    Central: [145, 114, 116, 118, 142, 112, 113, 117, 134, 138, 158],
+    West:    [108, 133, 136, 140, 109, 115, 119, 135, 137] },
+  { from: 2013, to: 9999,
+    East:    [110, 111, 147, 139, 141, 144, 146, 121, 143, 120],
+    Central: [145, 114, 116, 118, 142, 112, 113, 134, 138, 158],
+    West:    [108, 117, 133, 136, 140, 109, 115, 119, 135, 137] },
+];
+
+function divisionFor(teamId, year) {
+  const y = Number(year);
+  const era = DIVISION_ERAS.find(e => y >= e.from && y <= e.to);
+  if (!era) return null;
+  const id = Number(teamId);
+  for (const name of ['East', 'Central', 'West']) {
+    if (era[name].includes(id)) return name;
+  }
+  return null;
+}
+
+/**
+ * Takes one league's standings rows (already sorted) and returns the HTML for
+ * its divisions: a small East / Central / West heading followed by that
+ * division's table. Order within each division is preserved from `teams`.
+ */
+function standingsDivisionsHtml(teams, year) {
+  const groups = new Map([['East', []], ['Central', []], ['West', []], ['Other', []]]);
+  for (const t of teams) {
+    groups.get(divisionFor(t.id, year) || 'Other').push(t);
+  }
+
+  let html = '';
+  for (const [division, rows] of groups) {
+    if (rows.length === 0) continue;
+    html += `<div class="division-label">${division}</div>`;
+    html += `<div class="table-scroll"><table class="ledger"><thead><tr>
+      <th class="left">Team</th><th>W</th><th>L</th><th>Pct</th><th>GB</th>
+    </tr></thead><tbody>`;
+    for (const t of rows) {
+      html += `<tr>
+        <td class="left">${teamLinkHtml(t.id, t.n || `Team ${t.id}`)}</td>
+        <td class="num">${t.w ?? '—'}</td>
+        <td class="num">${t.l ?? '—'}</td>
+        <td class="num">${t.pct !== undefined && t.pct !== null ? t.pct : '—'}</td>
+        <td class="num">${t.gb ?? '—'}</td>
+      </tr>`;
+    }
+    html += `</tbody></table></div>`;
+  }
+  return html;
+}
+
+
 // ---- index.js ----
 function runIndexPage() {
 
@@ -365,19 +439,7 @@ function runIndexPage() {
       teams.sort((a, b) => (b.pct ?? 0) - (a.pct ?? 0));
       html += `<h3 style="font-family:var(--font-body);font-size:0.92rem;font-weight:600;
         color:var(--text-secondary);margin:18px 0 8px;">${LEAGUE_NAMES[lg] || `League ${lg}`}</h3>`;
-      html += `<div class="table-scroll"><table class="ledger"><thead><tr>
-        <th class="left">Team</th><th>W</th><th>L</th><th>Pct</th><th>GB</th>
-      </tr></thead><tbody>`;
-      for (const t of teams) {
-        html += `<tr>
-          <td class="left">${teamLinkHtml(t.id, t.n || `Team ${t.id}`)}</td>
-          <td class="num">${t.w ?? '—'}</td>
-          <td class="num">${t.l ?? '—'}</td>
-          <td class="num">${t.pct !== undefined && t.pct !== null ? t.pct : '—'}</td>
-          <td class="num">${t.gb ?? '—'}</td>
-        </tr>`;
-      }
-      html += `</tbody></table></div>`;
+      html += standingsDivisionsHtml(teams, result.year);
     }
 
     wrap.innerHTML = html;
@@ -1482,7 +1544,7 @@ function runStandingsPage() {
     document.title = `Standings — ${year} — MLB Archive`;
     document.getElementById('standings-title').textContent = `Standings — ${year}`;
     renderYearPicker(year);
-    renderStandings(data);
+    renderStandings(data, year);
 
     clearStatus(statusEl);
     contentEl.hidden = false;
@@ -1501,7 +1563,7 @@ function runStandingsPage() {
     ).join(' · ');
   }
 
-  function renderStandings(data) {
+  function renderStandings(data, year) {
     const wrap = document.getElementById('standings-body-wrap');
     if (!data || !Array.isArray(data.teams)) {
       wrap.innerHTML = '';
@@ -1520,19 +1582,7 @@ function runStandingsPage() {
       teams.sort((a, b) => (b.pct ?? 0) - (a.pct ?? 0));
       html += `<h3 style="font-family:var(--font-body);font-size:0.92rem;font-weight:600;
         color:var(--text-secondary);margin:18px 0 8px;">${LEAGUE_NAMES[lg] || `League ${lg}`}</h3>`;
-      html += `<div class="table-scroll"><table class="ledger"><thead><tr>
-        <th class="left">Team</th><th>W</th><th>L</th><th>Pct</th><th>GB</th>
-      </tr></thead><tbody>`;
-      for (const t of teams) {
-        html += `<tr>
-          <td class="left">${teamLinkHtml(t.id, t.n || `Team ${t.id}`)}</td>
-          <td class="num">${t.w ?? '—'}</td>
-          <td class="num">${t.l ?? '—'}</td>
-          <td class="num">${t.pct !== undefined && t.pct !== null ? t.pct : '—'}</td>
-          <td class="num">${t.gb ?? '—'}</td>
-        </tr>`;
-      }
-      html += `</tbody></table></div>`;
+      html += standingsDivisionsHtml(teams, year);
     }
 
     wrap.innerHTML = html;
