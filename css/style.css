@@ -649,3 +649,70 @@ a.l5--t { background: rgba(196, 200, 206, 0.12); border-color: rgba(196, 200, 20
   .ledger--standings a.team-chip { gap: 4px; }
   .ledger--standings a.l5 { width: 16px; height: 16px; font-size: 0.6rem; }
 }
+
+/* -------------------------------------------------------------------------
+   Team page: last 5 games
+   One card per game, newest first: opponent logo on top, this team's score
+   underneath - green if this team won, red if it lost (same soft tints as
+   the Last 5 chips). Rendered by loadRecentGames() in app.js.
+   ------------------------------------------------------------------------- */
+.recent-games {
+  display: grid;
+  grid-template-columns: repeat(5, minmax(0, 1fr));
+  gap: 12px;
+  max-width: 620px;
+}
+.recent-games[hidden] { display: none; }
+a.rg-card {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 10px;
+  min-width: 0;
+  padding: 14px 6px 12px;
+  background: var(--bg-secondary);
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius);
+}
+a.rg-card:hover { border-color: var(--border-strong); }
+.rg-logo {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 56px;
+  height: 56px;
+}
+.rg-logo img {
+  width: 100%;
+  height: 100%;
+  object-fit: contain;
+  border-radius: 8px;
+  display: block;
+}
+.rg-logo__fb[hidden] { display: none; }
+.rg-logo__fb {
+  font-size: 0.72rem;
+  text-align: center;
+  line-height: 1.2;
+  color: var(--text-tertiary);
+  overflow-wrap: anywhere;
+}
+.rg-score {
+  font-size: 1.05rem;
+  font-weight: 600;
+  line-height: 1;
+  white-space: nowrap;
+  font-variant-numeric: tabular-nums;
+  font-feature-settings: 'tnum' 1;
+}
+a.rg--w .rg-score { color: #86d9a8; }
+a.rg--l .rg-score { color: #f2949c; }
+a.rg--t .rg-score { color: var(--text-secondary); }
+
+@media (max-width: 640px) {
+  .recent-games { gap: 6px; }
+  a.rg-card { padding: 10px 4px 9px; gap: 8px; }
+  .rg-logo { width: 40px; height: 40px; }
+  .rg-logo img { border-radius: 7px; }
+  .rg-score { font-size: 0.85rem; }
+}
