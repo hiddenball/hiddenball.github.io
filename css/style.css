@@ -554,3 +554,42 @@ a.team-chip:hover .team-chip__name { color: var(--accent-hover); }
 @media (max-width: 640px) {
   .league-logo-card { width: 30px; height: 30px; }
 }
+
+/* -------------------------------------------------------------------------
+   Last 5 results (index standings)
+   Small W / L squares, oldest -> newest. Each one links to that game.
+   Rendered by lastFiveCellHtml().
+   ------------------------------------------------------------------------- */
+.l5-strip {
+  display: inline-flex;
+  gap: 4px;
+  vertical-align: middle;
+}
+a.l5 {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 24px;
+  height: 24px;
+  border-radius: var(--radius);
+  border-bottom: none;
+  font-size: 0.74rem;
+  font-weight: 600;
+  line-height: 1;
+  color: #fff;
+}
+a.l5:hover { border-bottom: none; filter: brightness(1.2); }
+a.l5--w { background: var(--success); }
+a.l5--l { background: var(--accent); }
+a.l5--l:hover { background: var(--accent-hover); filter: none; }
+a.l5--t { background: var(--border-strong); }
+.l5-cell .dim { color: var(--text-tertiary); }
+.l5-note {
+  margin: 12px 0 0;
+  font-size: 0.82rem;
+  color: var(--text-tertiary);
+}
+@media (max-width: 640px) {
+  .l5-strip { gap: 3px; }
+  a.l5 { width: 22px; height: 22px; font-size: 0.7rem; }
+}
