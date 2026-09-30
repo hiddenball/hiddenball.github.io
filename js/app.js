@@ -511,42 +511,34 @@ function standingsWinPct(t) {
 }
 
 /**
- * Works out, for the WHOLE season's team list (both leagues together):
- *  - rank: team id -> rank by win percentage (1 = best; equal pct share a rank)
- *  - spot: team id -> 'division' | 'runnerup' | 'wildcard' for teams in a playoff position
- *  - total: how many teams were ranked
+ * Works out which teams are in a playoff position for the WHOLE season list
+ * (both leagues together). Returns Map<teamId(string), 'division' | 'runnerup' | 'wildcard'>.
  * Playoff spots: best team(s) of each division, then the best remaining teams
  * in the league by win percentage. Tiebreak games aren't modelled.
  */
-function computeSeasonMarks(allTeams, year) {
-  const rank = new Map();
+function computePlayoffSpots(allTeams, year) {
   const spot = new Map();
+  const fmt = playoffFormat(year);
+  if (!fmt) return spot;
+
   const scored = allTeams
     .map(t => ({ t, p: standingsWinPct(t) }))
     .filter(x => x.p !== null)
     .sort((a, b) => b.p - a.p);
 
-  scored.forEach((x, i) => {
-    const prev = scored[i - 1];
-    rank.set(String(x.t.id), prev && prev.p === x.p ? rank.get(String(prev.t.id)) : i + 1);
-  });
-
-  const fmt = playoffFormat(year);
-  if (fmt) {
-    for (const rows of groupBy(scored, x => x.t.lg).values()) {
-      const taken = new Set();
-      const inDivision = rows.filter(x => divisionFor(x.t.id, year));
-      for (const divRows of groupBy(inDivision, x => divisionFor(x.t.id, year)).values()) {
-        divRows.slice(0, fmt.perDivision).forEach((x, i) => {
-          spot.set(String(x.t.id), i === 0 ? 'division' : 'runnerup');
-          taken.add(x);
-        });
-      }
-      rows.filter(x => !taken.has(x)).slice(0, fmt.wildCards)
-        .forEach(x => spot.set(String(x.t.id), 'wildcard'));
+  for (const rows of groupBy(scored, x => x.t.lg).values()) {
+    const taken = new Set();
+    const inDivision = rows.filter(x => divisionFor(x.t.id, year));
+    for (const divRows of groupBy(inDivision, x => divisionFor(x.t.id, year)).values()) {
+      divRows.slice(0, fmt.perDivision).forEach((x, i) => {
+        spot.set(String(x.t.id), i === 0 ? 'division' : 'runnerup');
+        taken.add(x);
+      });
     }
+    rows.filter(x => !taken.has(x)).slice(0, fmt.wildCards)
+      .forEach(x => spot.set(String(x.t.id), 'wildcard'));
   }
-  return { rank, spot, total: scored.length };
+  return spot;
 }
 
 const PLAYOFF_SPOT_LABELS = {
@@ -555,15 +547,12 @@ const PLAYOFF_SPOT_LABELS = {
   wildcard: 'Playoff spot: wild card',
 };
 
-/** Rank number + soft yellow dot shown before a team name (empty space kept for non-playoff teams so logos line up). */
-function teamMarkHtml(teamId, marks) {
-  const r = marks.rank.get(String(teamId));
-  const spot = marks.spot.get(String(teamId));
-  const rankTitle = r !== undefined ? `Rank ${r} of ${marks.total} by win percentage` : 'Not ranked';
-  const dot = spot
+/** Soft yellow dot shown before a team name (an invisible placeholder for non-playoff teams so logos line up). */
+function playoffDotHtml(teamId, spots) {
+  const spot = spots.get(String(teamId));
+  return spot
     ? `<span class="po-dot" role="img" title="${PLAYOFF_SPOT_LABELS[spot]}" aria-label="${PLAYOFF_SPOT_LABELS[spot]}"></span>`
     : `<span class="po-dot po-dot--none" aria-hidden="true"></span>`;
-  return `<span class="rk" title="${rankTitle}">${r !== undefined ? r : '—'}</span>${dot}`;
 }
 
 /**
@@ -608,37 +597,87 @@ const STANDINGS_PLAIN_COLUMNS = ['w', 'l', 'pct', 'gb'];
 const STANDINGS_WIDE_COLUMNS = ['pl', 'w', 'l', 'pct', 'gb', 'last5'];       // desktop / landscape
 const STANDINGS_VERTICAL_COLUMNS = ['last5', 'w', 'l', 'pl', 'pct', 'gb'];   // vertical screens
 
-const STANDINGS_HEADERS = {
-  pl: '<th title="Games played">PL</th>',
-  w: '<th>W</th>',
-  l: '<th>L</th>',
-  pct: '<th>Pct</th>',
-  gb: '<th>GB</th>',
-  last5: '<th class="l5-col">Last 5</th>',
-};
+const STANDINGS_LABELS = { pl: 'PL', w: 'W', l: 'L', pct: 'Pct', gb: 'GB' };
+const STANDINGS_TITLES = { pl: 'games played', w: 'wins', l: 'losses', pct: 'win percentage', gb: 'games behind' };
+
+// Sorting. Default is best win percentage on top. The first click on a column
+// puts the "best" value on top (most wins, fewest losses, closest to the lead);
+// clicking the same column again reverses it.
+const STANDINGS_DEFAULT_SORT = { key: 'pct', dir: 'desc' };
+const STANDINGS_FIRST_DIR = { pl: 'desc', w: 'desc', l: 'asc', pct: 'desc', gb: 'asc' };
+
+function nextStandingsSort(current, key) {
+  if (current.key === key) return { key, dir: current.dir === 'asc' ? 'desc' : 'asc' };
+  return { key, dir: STANDINGS_FIRST_DIR[key] || 'desc' };
+}
+
+function standingsNum(v) {
+  if (v === null || v === undefined || v === '') return null;
+  const n = Number(v);
+  return Number.isFinite(n) ? n : null;
+}
+
+function standingsSortValue(t, key) {
+  switch (key) {
+    case 'w': return standingsNum(t.w);
+    case 'l': return standingsNum(t.l);
+    case 'pl': {
+      const w = standingsNum(t.w), l = standingsNum(t.l);
+      return w === null || l === null ? null : w + l;
+    }
+    case 'pct': return standingsWinPct(t);
+    case 'gb': {
+      const raw = String(t.gb ?? '').trim();
+      if (raw === '-' || raw === '\u2013' || raw === '\u2014') return 0;   // division leader
+      if (raw.startsWith('+')) { const n = standingsNum(raw.slice(1)); return n === null ? null : -n; } // "+2.5" = 2.5 games AHEAD
+      return standingsNum(raw);
+    }
+    default: return null;
+  }
+}
+
+/** Returns a sorted copy. Missing values always go last; ties fall back to the better record. */
+function sortStandingsTeams(teams, sort) {
+  const mul = sort.dir === 'asc' ? 1 : -1;
+  return [...teams].sort((a, b) => {
+    const va = standingsSortValue(a, sort.key), vb = standingsSortValue(b, sort.key);
+    if (va === null && vb !== null) return 1;
+    if (vb === null && va !== null) return -1;
+    if (va !== null && va !== vb) return (va - vb) * mul;
+    const pa = standingsWinPct(a) ?? -1, pb = standingsWinPct(b) ?? -1;
+    if (pa !== pb) return pb - pa;
+    return (standingsNum(b.w) ?? 0) - (standingsNum(a.w) ?? 0);
+  });
+}
+
+function standingsHeaderHtml(key, sort) {
+  if (key === 'last5') return '<th class="l5-col">Last 5</th>';
+  const active = sort.key === key;
+  const ariaSort = active ? (sort.dir === 'asc' ? 'ascending' : 'descending') : 'none';
+  const arrow = active ? `<span class="sort-arrow" aria-hidden="true">${sort.dir === 'asc' ? '\u25B2' : '\u25BC'}</span>` : '';
+  return `<th class="sortable" aria-sort="${ariaSort}">` +
+    `<button type="button" class="sort-btn" data-sort="${key}" title="Sort by ${STANDINGS_TITLES[key]}">` +
+    `${STANDINGS_LABELS[key]}${arrow}</button></th>`;
+}
 
 /**
- * Takes one league's standings rows (already sorted) and returns the HTML for
- * its divisions: a small East / Central / West heading followed by that
- * division's table. Order within each division is preserved from `teams`.
+ * Takes one league's standings rows and returns ONE table for them, sorted by
+ * opts.sort (default: win percentage, best on top). Column headers are
+ * clickable buttons (data-sort="<key>"); the page re-renders with the new sort.
  *
  * opts.extended = true adds PL (games played) and "Last 5".
  * opts.vertical = true uses the vertical-screen column order
  *   (Last 5, W, L, PL, Pct, GB) instead of (PL, W, L, Pct, GB, Last 5).
  * opts.last5 = { status, byTeam, names } feeds the Last 5 column.
- * opts.marks = computeSeasonMarks(...) adds a rank number and playoff dot before each team name.
- * Without opts the table is the plain Team / W / L / Pct / GB layout
+ * opts.spots = computePlayoffSpots(...) adds a soft yellow dot before playoff teams.
+ * Without opts.extended the table is the plain Team / W / L / Pct / GB layout
  * (standings.html relies on that).
  */
-function standingsDivisionsHtml(teams, year, opts = {}) {
+function standingsTableHtml(teams, year, opts = {}) {
   const extended = !!opts.extended;
+  const sort = opts.sort || STANDINGS_DEFAULT_SORT;
   const columns = !extended ? STANDINGS_PLAIN_COLUMNS
     : (opts.vertical ? STANDINGS_VERTICAL_COLUMNS : STANDINGS_WIDE_COLUMNS);
-
-  const groups = new Map([['East', []], ['Central', []], ['West', []], ['Other', []]]);
-  for (const t of teams) {
-    groups.get(divisionFor(t.id, year) || 'Other').push(t);
-  }
 
   const cell = (key, t) => {
     switch (key) {
@@ -661,23 +700,18 @@ function standingsDivisionsHtml(teams, year, opts = {}) {
     }
   };
 
-  let html = '';
-  for (const [division, rows] of groups) {
-    if (rows.length === 0) continue;
-    html += `<div class="division-label">${division}</div>`;
-    html += `<div class="table-scroll"><table class="ledger${extended ? ' ledger--standings' : ''}"><thead><tr>` +
-      `<th class="left">Team</th>${columns.map(k => STANDINGS_HEADERS[k]).join('')}` +
-      `</tr></thead><tbody>`;
-    for (const t of rows) {
-      const teamCell = teamLinkHtml(t.id, t.n || `Team ${t.id}`);
-      const teamTd = opts.marks
-        ? `<span class="team-cell">${teamMarkHtml(t.id, opts.marks)}${teamCell}</span>`
-        : teamCell;
-      html += `<tr><td class="left">${teamTd}</td>` +
-        `${columns.map(k => cell(k, t)).join('')}</tr>`;
-    }
-    html += `</tbody></table></div>`;
+  let html = `<div class="table-scroll"><table class="ledger${extended ? ' ledger--standings' : ''}"><thead><tr>` +
+    `<th class="left">Team</th>${columns.map(k => standingsHeaderHtml(k, sort)).join('')}` +
+    `</tr></thead><tbody>`;
+  for (const t of sortStandingsTeams(teams, sort)) {
+    const teamCell = teamLinkHtml(t.id, t.n || `Team ${t.id}`);
+    const teamTd = opts.spots
+      ? `<span class="team-cell">${playoffDotHtml(t.id, opts.spots)}${teamCell}</span>`
+      : teamCell;
+    html += `<tr><td class="left">${teamTd}</td>` +
+      `${columns.map(k => cell(k, t)).join('')}</tr>`;
   }
+  html += `</tbody></table></div>`;
   return html;
 }
 
@@ -736,7 +770,8 @@ function runIndexPage() {
     for (const t of result.data.teams) names.set(String(t.id), t.n || `Team ${t.id}`);
 
     // rank + playoff spots are worked out once from the full season list (both leagues)
-    const marks = computeSeasonMarks(result.data.teams, result.year);
+    const spots = computePlayoffSpots(result.data.teams, result.year);
+    let sortState = STANDINGS_DEFAULT_SORT;
 
     const verticalMql = window.matchMedia(VERTICAL_SCREEN_QUERY);
     let currentLast5 = { status: 'pending' };
@@ -750,10 +785,18 @@ function runIndexPage() {
       for (const [lg, teams] of byLeague) {
         html += `<h3 class="league-heading" style="font-family:var(--font-body);font-size:0.92rem;font-weight:600;
           color:var(--text-secondary);margin:18px 0 8px;">${leagueLogoCardHtml(lg)}<span>${LEAGUE_NAMES[lg] || `League ${lg}`}</span></h3>`;
-        html += standingsDivisionsHtml(teams, result.year, { extended: true, last5, vertical: verticalMql.matches, marks });
+        html += standingsTableHtml(teams, result.year, { extended: true, last5, vertical: verticalMql.matches, spots, sort: sortState });
       }
       wrap.innerHTML = html;
     }
+
+    // Click a column header to sort by it; click again to reverse.
+    wrap.addEventListener('click', (e) => {
+      const btn = e.target.closest('[data-sort]');
+      if (!btn || !wrap.contains(btn)) return;
+      sortState = nextStandingsSort(sortState, btn.dataset.sort);
+      render(currentLast5);
+    });
 
     // Re-order the columns if the screen flips between vertical and wide (e.g. rotating a phone).
     const onScreenShapeChange = () => render(currentLast5);
@@ -1898,8 +1941,12 @@ function runStandingsPage() {
     ).join(' · ');
   }
 
+  let sortState = STANDINGS_DEFAULT_SORT;
+  let shown = null; // { data, year } currently on screen, so a header click can re-render it
+
   function renderStandings(data, year) {
     const wrap = document.getElementById('standings-body-wrap');
+    shown = { data, year };
     if (!data || !Array.isArray(data.teams)) {
       wrap.innerHTML = '';
       return;
@@ -1912,18 +1959,26 @@ function runStandingsPage() {
       byLeague.get(key).push(t);
     }
 
-    const marks = computeSeasonMarks(data.teams, year);
+    const spots = computePlayoffSpots(data.teams, year);
 
     let html = '';
     for (const [lg, teams] of byLeague) {
       teams.sort((a, b) => (b.pct ?? 0) - (a.pct ?? 0));
       html += `<h3 class="league-heading" style="font-family:var(--font-body);font-size:0.92rem;font-weight:600;
         color:var(--text-secondary);margin:18px 0 8px;">${leagueLogoCardHtml(lg)}<span>${LEAGUE_NAMES[lg] || `League ${lg}`}</span></h3>`;
-      html += standingsDivisionsHtml(teams, year, { marks });
+      html += standingsTableHtml(teams, year, { spots, sort: sortState });
     }
 
     wrap.innerHTML = html;
   }
+
+  // Click a column header to sort by it; click again to reverse.
+  document.getElementById('standings-body-wrap').addEventListener('click', (e) => {
+    const btn = e.target.closest('[data-sort]');
+    if (!btn || !shown) return;
+    sortState = nextStandingsSort(sortState, btn.dataset.sort);
+    renderStandings(shown.data, shown.year);
+  });
 
   main();
 
