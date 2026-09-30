@@ -385,6 +385,44 @@ function escapeHtml(v) {
 }
 
 /**
+ * Fallback for seasons that have no schedule.json in the data repos (the
+ * current season). Asks MLB's public schedule API for the regular season and
+ * converts each finished game into the same shape schedule.json uses, so
+ * buildLastFive() treats both sources identically. gamePk is the same id the
+ * game pages use. Throws on any network / HTTP problem.
+ */
+async function fetchScheduleFromStatsApi(year) {
+  const fields = 'dates,games,gamePk,gameDate,gameType,status,detailedState,teams,away,home,team,id,score';
+  const url = `https://statsapi.mlb.com/api/v1/schedule?sportId=1&season=${encodeURIComponent(year)}` +
+    `&gameType=R&fields=${fields}`;
+  const res = await fetch(url);
+  if (!res.ok) throw new Error(`${res.status} fetching MLB schedule for ${year}`);
+  const data = await res.json();
+
+  const games = [];
+  for (const day of (data && data.dates) || []) {
+    for (const g of day.games || []) {
+      const state = (g.status && g.status.detailedState) || '';
+      // Only games that were actually played to a finish (not Postponed / Suspended / Scheduled)
+      if (!/^(Final|Completed Early|Game Over)/.test(state)) continue;
+      const away = g.teams && g.teams.away, home = g.teams && g.teams.home;
+      if (!away || !home || !away.team || !home.team) continue;
+      games.push({
+        gamePk: g.gamePk,
+        date: g.gameDate,
+        status: 'Final',
+        gameType: g.gameType,
+        awayTeamId: away.team.id,
+        homeTeamId: home.team.id,
+        awayScore: away.score,
+        homeScore: home.score,
+      });
+    }
+  }
+  return games;
+}
+
+/**
  * Turns a season's schedule.json array into Map<teamId(string), result[]>,
  * where each list holds that team's last five finished games (oldest first).
  * result = { gamePk, date, outcome: 'W'|'L'|'T', us, them, oppId, home }
@@ -546,7 +584,7 @@ function runIndexPage() {
     function render(last5) {
       let html = '';
       if (last5.status === 'unavailable') {
-        html += `<p class="l5-note">Last 5 results aren't available for ${result.year} yet (no season schedule file for this season).</p>`;
+        html += `<p class="l5-note">Last 5 results couldn't be loaded for ${result.year}.</p>`;
       }
       for (const [lg, teams] of byLeague) {
         html += `<h3 class="league-heading" style="font-family:var(--font-body);font-size:0.92rem;font-weight:600;
@@ -564,9 +602,16 @@ function runIndexPage() {
     let schedule = null;
     try {
       schedule = await fetchSeasonFile(manifest, result.year, 'schedule.json');
-    } catch (_) { /* treated as unavailable below */ }
+    } catch (_) { /* fall through to the MLB schedule API below */ }
 
-    if (Array.isArray(schedule)) {
+    // No schedule.json for this season (the current season): use MLB's schedule API instead.
+    if (!Array.isArray(schedule)) {
+      try {
+        schedule = await fetchScheduleFromStatsApi(result.year);
+      } catch (_) { schedule = null; }
+    }
+
+    if (Array.isArray(schedule) && schedule.length > 0) {
       render({ status: 'ready', byTeam: buildLastFive(schedule), names });
     } else {
       render({ status: 'unavailable' });
