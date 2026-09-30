@@ -996,6 +996,9 @@ function runTeamPage() {
       loadSeasonRecord(manifest, id);
       e.target.disabled = true;
     });
+
+    // not awaited: the rest of the page is already visible while this loads
+    loadRecentGames(manifest, id);
   }
 
   function renderTeam(team) {
@@ -1057,6 +1060,78 @@ function runTeamPage() {
     list.innerHTML = entries
       .map(e => `<li><span class="yr">${e.label}</span>${e.name}</li>`)
       .join('');
+  }
+
+  /**
+   * Last five finished regular-season games for this team, newest first. Each
+   * card shows the OPPONENT's logo with this team's score underneath
+   * (this team's runs first): green if this team won, red if it lost.
+   * Starts at the current year and walks back until a season has games for
+   * this team (early in a year, or for a defunct franchise, the newest season
+   * may have none). Seasons with no schedule.json (the current one) fall back
+   * to MLB's schedule API, same as the index page's Last 5 column.
+   */
+  async function loadRecentGames(manifest, teamId) {
+    const statusEl2 = document.getElementById('recent-status');
+    const grid = document.getElementById('recent-games');
+    const heading = document.getElementById('recent-heading');
+    setStatus(statusEl2, 'Loading recent games\u2026');
+
+    try {
+      const thisYear = new Date().getFullYear();
+      let found = null;
+
+      for (let y = thisYear; y >= 1980; y--) {
+        let schedule = null;
+        try {
+          schedule = await fetchSeasonFile(manifest, y, 'schedule.json');
+        } catch (_) { /* fall through to the MLB schedule API below */ }
+
+        if (!Array.isArray(schedule) && y >= thisYear - 1) {
+          try {
+            schedule = await fetchScheduleFromStatsApi(y);
+          } catch (_) { schedule = null; }
+        }
+
+        if (Array.isArray(schedule) && schedule.length > 0) {
+          const list = buildLastFive(schedule).get(String(teamId));
+          if (list && list.length > 0) { found = { year: y, list }; break; }
+        }
+      }
+
+      if (!found) {
+        setStatus(statusEl2, 'No completed games found for this team in the archive.');
+        return;
+      }
+
+      const resolveTeamName = createTeamNameResolver(manifest);
+      const games = found.list.slice().reverse(); // newest first
+      const names = await Promise.all(games.map(r => resolveTeamName(r.oppId)));
+
+      grid.innerHTML = games.map((r, i) => {
+        const oppName = names[i];
+        const cls = r.outcome === 'W' ? 'rg--w' : r.outcome === 'L' ? 'rg--l' : 'rg--t';
+        const verb = r.outcome === 'W' ? 'Won' : r.outcome === 'L' ? 'Lost' : 'Tied';
+        const day = new Date(r.date).toLocaleDateString('en-US',
+          { timeZone: 'UTC', month: 'short', day: 'numeric', year: 'numeric' });
+        const label = `${verb} ${r.us}\u2013${r.them} ${r.home ? 'vs.' : '@'} ${oppName}, ${day}`;
+        const href = `game.html?id=${encodeURIComponent(r.gamePk)}&year=${encodeURIComponent(found.year)}`;
+        return `<a class="rg-card ${cls}" href="${href}" title="${escapeHtml(label)}" aria-label="${escapeHtml(label)}">` +
+          `<span class="rg-logo">` +
+            `<img src="assets/logos/${encodeURIComponent(r.oppId)}.webp" alt="" ` +
+              `onerror="this.onerror=null;this.style.display='none';this.nextElementSibling.hidden=false;">` +
+            `<span class="rg-logo__fb" hidden>${escapeHtml(shortTeamName(oppName))}</span>` +
+          `</span>` +
+          `<span class="rg-score">${r.us}&ndash;${r.them}</span>` +
+        `</a>`;
+      }).join('');
+
+      heading.textContent = `Last 5 games \u2014 ${found.year} season`;
+      clearStatus(statusEl2);
+      grid.hidden = false;
+    } catch (err) {
+      setStatus(statusEl2, `Couldn't load recent games (${err.message}).`, true);
+    }
   }
 
   async function loadSeasonRecord(manifest, teamId) {
