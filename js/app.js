@@ -219,10 +219,11 @@ async function fetchCoreIndex(manifest, name) {
  *   containerEl  - element to fill with .entity-card links
  *   searchEl     - the <input>, or null/undefined if the page has no search box
  *   hrefFor(e)   - (entry) => href string
+ *   logoFor(e)   - optional; (entry) => team id to show a logo card for, or null for none
  *   maxRender    - cap on rendered cards (default 100)
  *   emptyMessage - shown when a search matches nothing
  */
-function initEntityBrowser({ entries, containerEl, searchEl, hrefFor, maxRender = 100, emptyMessage = 'No matches.' }) {
+function initEntityBrowser({ entries, containerEl, searchEl, hrefFor, logoFor, maxRender = 100, emptyMessage = 'No matches.' }) {
   function render(query) {
     const q = (query || '').trim().toLowerCase();
     const matches = q ? entries.filter(e => e.name.toLowerCase().includes(q)) : entries;
@@ -234,7 +235,8 @@ function initEntityBrowser({ entries, containerEl, searchEl, hrefFor, maxRender 
     }
 
     containerEl.innerHTML = shown.map(e => `
-      <a class="entity-card" href="${hrefFor(e)}">
+      <a class="entity-card${logoFor ? ' entity-card--logo' : ''}" href="${hrefFor(e)}">
+        ${logoFor ? teamLogoCardHtml(logoFor(e)) : ''}
         <span class="entity-card__name">${e.name}</span>
       </a>`).join('');
 
@@ -289,6 +291,26 @@ function setImgWithFallback(imgEl, primarySrc, fallbackSrc) {
 function setHeroBanner(heroEl, bannerSrc) {
   heroEl.style.backgroundImage =
     `linear-gradient(rgba(10,14,20,0.55), rgba(10,14,20,0.88)), url("${bannerSrc}")`;
+}
+
+
+// --------------------------------------------------------------------------
+// Team logo card
+// Small rounded square card holding the team's logo, drawn from
+// assets/logos/{teamId}.webp (falls back to assets/logos/default.webp, then
+// hides just the image so an empty card never shows a broken-image icon).
+// teamLinkHtml() renders: [logo card] Team Name, as one link to the team page.
+// --------------------------------------------------------------------------
+function teamLogoCardHtml(teamId) {
+  return `<span class="team-logo-card"><img src="assets/logos/${teamId}.webp" alt="" ` +
+    `onerror="if(!this.dataset.fb){this.dataset.fb='1';this.src='assets/logos/default.webp';}` +
+    `else{this.onerror=null;this.style.display='none';}"></span>`;
+}
+
+function teamLinkHtml(teamId, name) {
+  if (teamId === null || teamId === undefined || teamId === '') return `${name}`;
+  return `<a class="team-link team-chip" href="team.html?id=${teamId}">` +
+    `${teamLogoCardHtml(teamId)}<span class="team-chip__name">${name}</span></a>`;
 }
 
 
@@ -348,7 +370,7 @@ function runIndexPage() {
       </tr></thead><tbody>`;
       for (const t of teams) {
         html += `<tr>
-          <td class="left"><a class="team-link" href="team.html?id=${t.id}">${t.n || `Team ${t.id}`}</a></td>
+          <td class="left">${teamLinkHtml(t.id, t.n || `Team ${t.id}`)}</td>
           <td class="num">${t.w ?? '—'}</td>
           <td class="num">${t.l ?? '—'}</td>
           <td class="num">${t.pct !== undefined && t.pct !== null ? t.pct : '—'}</td>
@@ -413,8 +435,8 @@ function runIndexPage() {
       ]);
       rows.push(`<tr>
         <td class="left">${fmtDate(g.date)}</td>
-        <td class="left"><a class="team-link" href="team.html?id=${g.awayTeamId}">${awayName}</a></td>
-        <td class="left"><a class="team-link" href="team.html?id=${g.homeTeamId}">${homeName}</a></td>
+        <td class="left">${teamLinkHtml(g.awayTeamId, awayName)}</td>
+        <td class="left">${teamLinkHtml(g.homeTeamId, homeName)}</td>
         <td class="num"><a href="${gameHref(g)}">${g.awayScore}&ndash;${g.homeScore}</a></td>
       </tr>`);
     }
@@ -684,6 +706,7 @@ function runTeamsPage() {
       containerEl: document.getElementById('team-grid'),
       searchEl: document.getElementById('team-search'),
       hrefFor: (e) => `team.html?id=${e.id}`,
+      logoFor: (e) => e.id,
       maxRender: 200, // there are only 42 teams — this cap is effectively unlimited
       emptyMessage: 'No teams match your search.',
     });
@@ -876,7 +899,7 @@ function runPlayerPage() {
 
       lines.push(`<tr>
         <td class="left">${row.year}</td>
-        <td class="left"><a class="team-link" href="team.html?id=${row.teamId}">${name}</a></td>
+        <td class="left">${teamLinkHtml(row.teamId, name)}</td>
         <td class="num">${fmtOrDash(s.gamesPlayed)}</td>
         <td class="num">${fmtOrDash(s.atBats)}</td>
         <td class="num">${fmtOrDash(s.runs)}</td>
@@ -924,7 +947,7 @@ function runPlayerPage() {
 
       lines.push(`<tr>
         <td class="left">${row.year}</td>
-        <td class="left"><a class="team-link" href="team.html?id=${row.teamId}">${name}</a></td>
+        <td class="left">${teamLinkHtml(row.teamId, name)}</td>
         <td class="num">${fmtOrDash(s.wins)}</td>
         <td class="num">${fmtOrDash(s.losses)}</td>
         <td class="num">${era !== null ? fmtNum(era, 2) : '—'}</td>
@@ -966,7 +989,7 @@ function runPlayerPage() {
 
       lines.push(`<tr>
         <td class="left">${row.year}</td>
-        <td class="left"><a class="team-link" href="team.html?id=${row.teamId}">${name}</a></td>
+        <td class="left">${teamLinkHtml(row.teamId, name)}</td>
         <td class="left">${pos}</td>
         <td class="num">${fmtOrDash(s.games)}</td>
         <td class="num">${fmtOrDash(s.gamesStarted)}</td>
@@ -1159,7 +1182,7 @@ function runManagerPage() {
 
       lines.push(`<tr>
         <td class="left">${year}</td>
-        <td class="left"><a class="team-link" href="team.html?id=${row.teamId}">${name}</a></td>
+        <td class="left">${teamLinkHtml(row.teamId, name)}</td>
         <td class="num">${fmtOrDash(wins)}</td>
         <td class="num">${fmtOrDash(losses)}</td>
         <td class="num">${pct !== null ? String(pct) : '—'}</td>
@@ -1351,8 +1374,8 @@ function runBallparkPage() {
       ]);
       rows.push(`<tr>
         <td class="left">${fmtDate(g.date)}</td>
-        <td class="left"><a class="team-link" href="team.html?id=${g.awayTeamId}">${awayName}</a></td>
-        <td class="left"><a class="team-link" href="team.html?id=${g.homeTeamId}">${homeName}</a></td>
+        <td class="left">${teamLinkHtml(g.awayTeamId, awayName)}</td>
+        <td class="left">${teamLinkHtml(g.homeTeamId, homeName)}</td>
         <td class="num"><a href="${gameHref(g)}">${g.awayScore}&ndash;${g.homeScore}</a></td>
       </tr>`);
     }
@@ -1502,7 +1525,7 @@ function runStandingsPage() {
       </tr></thead><tbody>`;
       for (const t of teams) {
         html += `<tr>
-          <td class="left"><a class="team-link" href="team.html?id=${t.id}">${t.n || `Team ${t.id}`}</a></td>
+          <td class="left">${teamLinkHtml(t.id, t.n || `Team ${t.id}`)}</td>
           <td class="num">${t.w ?? '—'}</td>
           <td class="num">${t.l ?? '—'}</td>
           <td class="num">${t.pct !== undefined && t.pct !== null ? t.pct : '—'}</td>
@@ -1627,8 +1650,8 @@ function runScoresPage() {
       ]);
       rows.push(`<tr>
         <td class="left">${fmtDate(g.date)}</td>
-        <td class="left"><a class="team-link" href="team.html?id=${g.awayTeamId}">${awayName}</a></td>
-        <td class="left"><a class="team-link" href="team.html?id=${g.homeTeamId}">${homeName}</a></td>
+        <td class="left">${teamLinkHtml(g.awayTeamId, awayName)}</td>
+        <td class="left">${teamLinkHtml(g.homeTeamId, homeName)}</td>
         <td class="num"><a href="${gameHref(g)}">${g.awayScore}&ndash;${g.homeScore}</a></td>
         <td class="left">${g.status}</td>
       </tr>`);
@@ -1807,8 +1830,8 @@ function runPostseasonPage() {
       rows.push(`<tr>
         <td class="left">${round}</td>
         <td class="left">${fmtDate(g.date)}</td>
-        <td class="left"><a class="team-link" href="team.html?id=${g.awayTeamId}">${awayName}</a></td>
-        <td class="left"><a class="team-link" href="team.html?id=${g.homeTeamId}">${homeName}</a></td>
+        <td class="left">${teamLinkHtml(g.awayTeamId, awayName)}</td>
+        <td class="left">${teamLinkHtml(g.homeTeamId, homeName)}</td>
         <td class="num"><a href="${gameHref(g)}">${g.awayScore}&ndash;${g.homeScore}</a></td>
       </tr>`);
     }
@@ -1914,7 +1937,7 @@ function runAwardsPage() {
       }
       if (a.teamId !== null && a.teamId !== undefined) {
         const teamName = await resolveTeamName(a.teamId);
-        parts.push(`<a class="team-link" href="team.html?id=${a.teamId}">${teamName}</a>`);
+        parts.push(`${teamLinkHtml(a.teamId, teamName)}`);
       }
       const value = parts.length ? parts.join(' — ') : '—';
       rows.push(`<tr><td class="trophy-label">${a.award || '—'}</td><td class="trophy-years">${value}</td></tr>`);
@@ -2044,7 +2067,7 @@ function runDraftPage() {
         <td class="left">${playerCell}</td>
         <td class="left">${position || '—'}</td>
         <td class="left">${school || '—'}</td>
-        <td class="left"><a class="team-link" href="team.html?id=${teamId}">${teamName}</a></td>
+        <td class="left">${teamLinkHtml(teamId, teamName)}</td>
       </tr>`);
     }
     body.innerHTML = rows.join('');
