@@ -319,10 +319,28 @@ function leagueLogoCardHtml(leagueId) {
     `onerror="this.onerror=null;this.style.display='none';"></span>`;
 }
 
+// Nickname only ("Seattle Mariners" -> "Mariners"), shown on vertical/narrow screens.
+// Two-word nicknames are listed explicitly; everything else is the last word.
+const TWO_WORD_NICKNAMES = ['Red Sox', 'White Sox', 'Blue Jays', 'Devil Rays'];
+function shortTeamName(name) {
+  const n = String(name ?? '').trim();
+  if (!n || /^Team \d+$/.test(n)) return n;            // unknown team placeholder: leave as is
+  for (const nick of TWO_WORD_NICKNAMES) {
+    if (n === nick || n.endsWith(` ${nick}`)) return nick;
+  }
+  if (/\bAngels\b/.test(n)) return 'Angels';           // e.g. "Los Angeles Angels of Anaheim"
+  const parts = n.split(/\s+/);
+  return parts[parts.length - 1];
+}
+
 function teamLinkHtml(teamId, name) {
   if (teamId === null || teamId === undefined || teamId === '') return `${name}`;
+  const short = shortTeamName(name);
+  const label = short && short !== name
+    ? `<span class="tn-full">${name}</span><span class="tn-short">${short}</span>`
+    : `${name}`;
   return `<a class="team-link team-chip" href="team.html?id=${teamId}">` +
-    `${teamLogoCardHtml(teamId)}<span class="team-chip__name">${name}</span></a>`;
+    `${teamLogoCardHtml(teamId)}<span class="team-chip__name">${label}</span></a>`;
 }
 
 
@@ -470,9 +488,9 @@ function buildLastFive(schedule) {
 
 /** One "Last 5" table cell. state = { status: 'pending'|'unavailable'|'ready', byTeam, names } */
 function lastFiveCellHtml(teamId, year, state) {
-  if (!state || state.status === 'pending') return `<td class="left l5-cell"><span class="dim">…</span></td>`;
+  if (!state || state.status === 'pending') return `<td class="l5-cell"><span class="dim">…</span></td>`;
   const list = state.status === 'ready' ? state.byTeam.get(String(teamId)) : null;
-  if (!list || list.length === 0) return `<td class="left l5-cell"><span class="dim">—</span></td>`;
+  if (!list || list.length === 0) return `<td class="l5-cell"><span class="dim">—</span></td>`;
 
   const chips = list.map(r => {
     const opp = state.names.get(String(r.oppId)) || `Team ${r.oppId}`;
@@ -482,7 +500,7 @@ function lastFiveCellHtml(teamId, year, state) {
     return `<a class="l5 ${cls}" href="game.html?id=${encodeURIComponent(r.gamePk)}&year=${encodeURIComponent(year)}" ` +
       `title="${escapeHtml(label)}" aria-label="${escapeHtml(label)}">${r.outcome}</a>`;
   }).join('');
-  return `<td class="left l5-cell"><span class="l5-strip">${chips}</span></td>`;
+  return `<td class="l5-cell"><span class="l5-strip">${chips}</span></td>`;
 }
 
 /**
@@ -507,7 +525,7 @@ function standingsDivisionsHtml(teams, year, opts = {}) {
     if (rows.length === 0) continue;
     html += `<div class="division-label">${division}</div>`;
     html += `<div class="table-scroll"><table class="ledger"><thead><tr>
-      <th class="left">Team</th>${extended ? '<th title="Games played">PL</th>' : ''}<th>W</th><th>L</th><th>Pct</th><th>GB</th>${extended ? '<th class="left">Last 5</th>' : ''}
+      <th class="left">Team</th>${extended ? '<th title="Games played">PL</th>' : ''}<th>W</th><th>L</th><th>Pct</th><th>GB</th>${extended ? '<th class="l5-col">Last 5</th>' : ''}
     </tr></thead><tbody>`;
     for (const t of rows) {
       const played = (Number.isFinite(Number(t.w)) && Number.isFinite(Number(t.l)) && t.w !== null && t.l !== null && t.w !== undefined && t.l !== undefined)
