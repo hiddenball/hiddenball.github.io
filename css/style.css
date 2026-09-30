@@ -572,17 +572,18 @@ a.l5 {
   width: 24px;
   height: 24px;
   border-radius: var(--radius);
-  border-bottom: none;
+  border: 1px solid transparent;
   font-size: 0.74rem;
   font-weight: 600;
   line-height: 1;
-  color: #fff;
 }
-a.l5:hover { border-bottom: none; filter: brightness(1.2); }
-a.l5--w { background: var(--success); }
-a.l5--l { background: var(--accent); }
-a.l5--l:hover { background: var(--accent-hover); filter: none; }
-a.l5--t { background: var(--border-strong); }
+a.l5:hover { border-bottom-color: currentColor; }
+/* soft tints: gentle fill, lighter letter, faint matching outline */
+a.l5--w { background: rgba(102, 204, 145, 0.16); border-color: rgba(102, 204, 145, 0.32); color: #86d9a8; }
+a.l5--w:hover { background: rgba(102, 204, 145, 0.28); border-color: rgba(102, 204, 145, 0.55); }
+a.l5--l { background: rgba(238, 115, 125, 0.16); border-color: rgba(238, 115, 125, 0.32); color: #f2949c; }
+a.l5--l:hover { background: rgba(238, 115, 125, 0.28); border-color: rgba(238, 115, 125, 0.55); }
+a.l5--t { background: rgba(196, 200, 206, 0.12); border-color: rgba(196, 200, 206, 0.28); color: var(--text-secondary); }
 .l5-cell .dim { color: var(--text-tertiary); }
 .l5-note {
   margin: 12px 0 0;
