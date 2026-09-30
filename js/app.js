@@ -998,7 +998,7 @@ function runTeamPage() {
     });
 
     // not awaited: the rest of the page is already visible while this loads
-    loadRecentGames(manifest, id);
+    loadRecentGames(manifest, id, team.currentName);
   }
 
   function renderTeam(team) {
@@ -1071,7 +1071,7 @@ function runTeamPage() {
    * may have none). Seasons with no schedule.json (the current one) fall back
    * to MLB's schedule API, same as the index page's Last 5 column.
    */
-  async function loadRecentGames(manifest, teamId) {
+  async function loadRecentGames(manifest, teamId, teamName) {
     const statusEl2 = document.getElementById('recent-status');
     const grid = document.getElementById('recent-games');
     const heading = document.getElementById('recent-heading');
@@ -1129,9 +1129,119 @@ function runTeamPage() {
       heading.textContent = `Last 5 games \u2014 ${found.year} season`;
       clearStatus(statusEl2);
       grid.hidden = false;
+
+      // the "Latest game" card above it: newest game of the list (handles its own errors)
+      renderLatestMatchup(manifest, teamId, teamName, found.year, games[0], names[0]);
     } catch (err) {
       setStatus(statusEl2, `Couldn't load recent games (${err.message}).`, true);
     }
+  }
+
+  // --------------------------------------------------------------------------
+  // Latest game: this team vs the last opponent it played.
+  // Two logo cards with the nickname under each, the score between them (the
+  // loser's number is faded to 50%), then three stat lines comparing the teams.
+  // The whole block is one link to that game's page.
+  // --------------------------------------------------------------------------
+  function numOrNull(v) {
+    if (v === null || v === undefined || v === '') return null;
+    const n = Number(v);
+    return Number.isFinite(n) ? n : null;
+  }
+
+  /** Three comparison stats for one game; side is 'a' (away) or 'h' (home). Skips any stat the game file lacks. */
+  function latestGameStats(game, usSide, themSide) {
+    const box = game.box || {};
+    const ls = game.ls || {};
+
+    const batTotal = (side, key) => {
+      const t = box[side];
+      if (!t) return null;
+      if (t.tot && numOrNull(t.tot[key]) !== null) return numOrNull(t.tot[key]);
+      if (Array.isArray(t.bat) && t.bat.length) return t.bat.reduce((sum, p) => sum + (numOrNull(p[key]) || 0), 0);
+      return null;
+    };
+    const hits = (side) => {
+      const fromLine = Array.isArray(ls[side]) ? numOrNull(ls[side][1]) : null; // linescore totals: R, H, E, LOB
+      return fromLine !== null ? fromLine : batTotal(side, 'h');
+    };
+    const pitchingK = (side) => {
+      const t = box[side];
+      if (!t || !Array.isArray(t.pit) || t.pit.length === 0) return null;
+      return t.pit.reduce((sum, p) => sum + (numOrNull(p.k) || 0), 0);
+    };
+
+    const defs = [
+      ['Hits', hits],
+      ['Home runs', (side) => batTotal(side, 'hr')],
+      ['Pitching strikeouts', pitchingK],
+    ];
+    const out = [];
+    for (const [label, fn] of defs) {
+      const us = fn(usSide), them = fn(themSide);
+      if (us !== null && them !== null) out.push({ label, us, them });
+    }
+    return out;
+  }
+
+  function latestStatRowHtml({ label, us, them }) {
+    const lead = us > them ? 'us' : them > us ? 'them' : null;
+    const segCls = (side) => lead === null ? '' : (lead === side ? ' is-lead' : ' is-trail');
+    const total = us + them;
+    const usGrow = total > 0 ? us : 1;
+    const themGrow = total > 0 ? them : 1;
+    const aria = `${label}: ${us} to ${them}`;
+    return `<div class="mu-stat">` +
+      `<div class="mu-stat__row">` +
+        `<span class="mu-stat__v${lead === 'us' ? ' is-lead' : ''}">${us}</span>` +
+        `<span class="mu-stat__label">${escapeHtml(label)}</span>` +
+        `<span class="mu-stat__v${lead === 'them' ? ' is-lead' : ''}">${them}</span>` +
+      `</div>` +
+      `<div class="mu-bar" role="img" aria-label="${escapeHtml(aria)}">` +
+        `<span class="mu-bar__seg${segCls('us')}" style="flex:${usGrow} 1 0;"></span>` +
+        `<span class="mu-bar__seg${segCls('them')}" style="flex:${themGrow} 1 0;"></span>` +
+      `</div>` +
+    `</div>`;
+  }
+
+  function latestTeamHtml(teamId, name) {
+    return `<div class="mu-team">` +
+      `<span class="mu-logo"><img src="assets/logos/${encodeURIComponent(teamId)}.webp" alt="" ` +
+        `onerror="this.onerror=null;this.style.display='none';"></span>` +
+      `<span class="mu-name">${escapeHtml(shortTeamName(name))}</span>` +
+    `</div>`;
+  }
+
+  async function renderLatestMatchup(manifest, teamId, teamName, year, r, oppName) {
+    try {
+      const block = document.getElementById('latest-block');
+      const link = document.getElementById('latest-link');
+      if (!block || !link || !r) return;
+
+      const usDim = r.outcome === 'L' ? ' class="mu-dim"' : '';
+      const themDim = r.outcome === 'W' ? ' class="mu-dim"' : '';
+
+      link.href = `game.html?id=${encodeURIComponent(r.gamePk)}&year=${encodeURIComponent(year)}`;
+      link.setAttribute('aria-label',
+        `${teamName} ${r.us} to ${r.them} ${r.home ? 'vs.' : '@'} ${oppName} \u2014 open game`);
+      link.innerHTML =
+        `<div class="mu-top">` +
+          latestTeamHtml(teamId, teamName) +
+          `<div class="mu-score"><span${usDim}>${r.us}</span><span class="mu-dash">&ndash;</span><span${themDim}>${r.them}</span></div>` +
+          latestTeamHtml(r.oppId, oppName) +
+        `</div>` +
+        `<div class="mu-stats" hidden></div>`;
+      block.hidden = false;
+
+      // the stat lines come from the full game file; if it can't be loaded the card simply stays without them
+      const game = await fetchSeasonFile(manifest, year, `games/${r.gamePk}.json`);
+      if (!game || !game.box) return;
+      const stats = latestGameStats(game, r.home ? 'h' : 'a', r.home ? 'a' : 'h');
+      if (stats.length === 0) return;
+      const statsEl = link.querySelector('.mu-stats');
+      statsEl.innerHTML = stats.map(latestStatRowHtml).join('');
+      statsEl.hidden = false;
+    } catch (_) { /* the matchup card is an extra; never let it break the page */ }
   }
 
   async function loadSeasonRecord(manifest, teamId) {
