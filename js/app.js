@@ -307,6 +307,18 @@ function teamLogoCardHtml(teamId) {
     `else{this.onerror=null;this.style.display='none';}"></span>`;
 }
 
+// League logo card: assets/leagues/al.webp (American) / nl.webp (National).
+// Same look as the team logo cards. Unknown league ids get no card, and a
+// missing image file just hides the image instead of showing a broken icon.
+const LEAGUE_LOGO_FILES = { 103: 'al', 104: 'nl' };
+
+function leagueLogoCardHtml(leagueId) {
+  const file = LEAGUE_LOGO_FILES[leagueId];
+  if (!file) return '';
+  return `<span class="team-logo-card league-logo-card"><img src="assets/leagues/${file}.webp" alt="" ` +
+    `onerror="this.onerror=null;this.style.display='none';"></span>`;
+}
+
 function teamLinkHtml(teamId, name) {
   if (teamId === null || teamId === undefined || teamId === '') return `${name}`;
   return `<a class="team-link team-chip" href="team.html?id=${teamId}">` +
@@ -437,8 +449,8 @@ function runIndexPage() {
     let html = '';
     for (const [lg, teams] of byLeague) {
       teams.sort((a, b) => (b.pct ?? 0) - (a.pct ?? 0));
-      html += `<h3 style="font-family:var(--font-body);font-size:0.92rem;font-weight:600;
-        color:var(--text-secondary);margin:18px 0 8px;">${LEAGUE_NAMES[lg] || `League ${lg}`}</h3>`;
+      html += `<h3 class="league-heading" style="font-family:var(--font-body);font-size:0.92rem;font-weight:600;
+        color:var(--text-secondary);margin:18px 0 8px;">${leagueLogoCardHtml(lg)}<span>${LEAGUE_NAMES[lg] || `League ${lg}`}</span></h3>`;
       html += standingsDivisionsHtml(teams, result.year);
     }
 
@@ -1580,8 +1592,8 @@ function runStandingsPage() {
     let html = '';
     for (const [lg, teams] of byLeague) {
       teams.sort((a, b) => (b.pct ?? 0) - (a.pct ?? 0));
-      html += `<h3 style="font-family:var(--font-body);font-size:0.92rem;font-weight:600;
-        color:var(--text-secondary);margin:18px 0 8px;">${LEAGUE_NAMES[lg] || `League ${lg}`}</h3>`;
+      html += `<h3 class="league-heading" style="font-family:var(--font-body);font-size:0.92rem;font-weight:600;
+        color:var(--text-secondary);margin:18px 0 8px;">${leagueLogoCardHtml(lg)}<span>${LEAGUE_NAMES[lg] || `League ${lg}`}</span></h3>`;
       html += standingsDivisionsHtml(teams, year);
     }
 
