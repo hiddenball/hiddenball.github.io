@@ -503,42 +503,71 @@ function lastFiveCellHtml(teamId, year, state) {
   return `<td class="l5-cell"><span class="l5-strip">${chips}</span></td>`;
 }
 
+// Same rule the stylesheet uses for "vertical screens" (nicknames + compact table).
+const VERTICAL_SCREEN_QUERY = '(max-width: 640px), (orientation: portrait) and (max-width: 900px)';
+
+// Column order after the Team column.
+const STANDINGS_PLAIN_COLUMNS = ['w', 'l', 'pct', 'gb'];
+const STANDINGS_WIDE_COLUMNS = ['pl', 'w', 'l', 'pct', 'gb', 'last5'];       // desktop / landscape
+const STANDINGS_VERTICAL_COLUMNS = ['last5', 'w', 'l', 'pl', 'pct', 'gb'];   // vertical screens
+
+const STANDINGS_HEADERS = {
+  pl: '<th title="Games played">PL</th>',
+  w: '<th>W</th>',
+  l: '<th>L</th>',
+  pct: '<th>Pct</th>',
+  gb: '<th>GB</th>',
+  last5: '<th class="l5-col">Last 5</th>',
+};
+
 /**
  * Takes one league's standings rows (already sorted) and returns the HTML for
  * its divisions: a small East / Central / West heading followed by that
  * division's table. Order within each division is preserved from `teams`.
  *
- * opts.extended = true adds PL (games played) before W and "Last 5" after GB.
+ * opts.extended = true adds PL (games played) and "Last 5".
+ * opts.vertical = true uses the vertical-screen column order
+ *   (Last 5, W, L, PL, Pct, GB) instead of (PL, W, L, Pct, GB, Last 5).
  * opts.last5 = { status, byTeam, names } feeds the Last 5 column.
  * Without opts the table is the plain Team / W / L / Pct / GB layout
  * (standings.html relies on that).
  */
 function standingsDivisionsHtml(teams, year, opts = {}) {
   const extended = !!opts.extended;
+  const columns = !extended ? STANDINGS_PLAIN_COLUMNS
+    : (opts.vertical ? STANDINGS_VERTICAL_COLUMNS : STANDINGS_WIDE_COLUMNS);
+
   const groups = new Map([['East', []], ['Central', []], ['West', []], ['Other', []]]);
   for (const t of teams) {
     groups.get(divisionFor(t.id, year) || 'Other').push(t);
   }
 
+  const cell = (key, t) => {
+    switch (key) {
+      case 'pl': {
+        const ok = t.w !== null && t.w !== undefined && t.l !== null && t.l !== undefined &&
+          Number.isFinite(Number(t.w)) && Number.isFinite(Number(t.l));
+        return `<td class="num">${ok ? Number(t.w) + Number(t.l) : '—'}</td>`;
+      }
+      case 'w': return `<td class="num">${t.w ?? '—'}</td>`;
+      case 'l': return `<td class="num">${t.l ?? '—'}</td>`;
+      case 'pct': return `<td class="num">${t.pct !== undefined && t.pct !== null ? t.pct : '—'}</td>`;
+      case 'gb': return `<td class="num">${t.gb ?? '—'}</td>`;
+      case 'last5': return lastFiveCellHtml(t.id, year, opts.last5);
+      default: return '';
+    }
+  };
+
   let html = '';
   for (const [division, rows] of groups) {
     if (rows.length === 0) continue;
     html += `<div class="division-label">${division}</div>`;
-    html += `<div class="table-scroll"><table class="ledger"><thead><tr>
-      <th class="left">Team</th>${extended ? '<th title="Games played">PL</th>' : ''}<th>W</th><th>L</th><th>Pct</th><th>GB</th>${extended ? '<th class="l5-col">Last 5</th>' : ''}
-    </tr></thead><tbody>`;
+    html += `<div class="table-scroll"><table class="ledger${extended ? ' ledger--standings' : ''}"><thead><tr>` +
+      `<th class="left">Team</th>${columns.map(k => STANDINGS_HEADERS[k]).join('')}` +
+      `</tr></thead><tbody>`;
     for (const t of rows) {
-      const played = (Number.isFinite(Number(t.w)) && Number.isFinite(Number(t.l)) && t.w !== null && t.l !== null && t.w !== undefined && t.l !== undefined)
-        ? Number(t.w) + Number(t.l) : '—';
-      html += `<tr>
-        <td class="left">${teamLinkHtml(t.id, t.n || `Team ${t.id}`)}</td>
-        ${extended ? `<td class="num">${played}</td>` : ''}
-        <td class="num">${t.w ?? '—'}</td>
-        <td class="num">${t.l ?? '—'}</td>
-        <td class="num">${t.pct !== undefined && t.pct !== null ? t.pct : '—'}</td>
-        <td class="num">${t.gb ?? '—'}</td>
-        ${extended ? lastFiveCellHtml(t.id, year, opts.last5) : ''}
-      </tr>`;
+      html += `<tr><td class="left">${teamLinkHtml(t.id, t.n || `Team ${t.id}`)}</td>` +
+        `${columns.map(k => cell(k, t)).join('')}</tr>`;
     }
     html += `</tbody></table></div>`;
   }
@@ -599,7 +628,11 @@ function runIndexPage() {
     const names = new Map();
     for (const t of result.data.teams) names.set(String(t.id), t.n || `Team ${t.id}`);
 
+    const verticalMql = window.matchMedia(VERTICAL_SCREEN_QUERY);
+    let currentLast5 = { status: 'pending' };
+
     function render(last5) {
+      currentLast5 = last5;
       let html = '';
       if (last5.status === 'unavailable') {
         html += `<p class="l5-note">Last 5 results couldn't be loaded for ${result.year}.</p>`;
@@ -607,10 +640,15 @@ function runIndexPage() {
       for (const [lg, teams] of byLeague) {
         html += `<h3 class="league-heading" style="font-family:var(--font-body);font-size:0.92rem;font-weight:600;
           color:var(--text-secondary);margin:18px 0 8px;">${leagueLogoCardHtml(lg)}<span>${LEAGUE_NAMES[lg] || `League ${lg}`}</span></h3>`;
-        html += standingsDivisionsHtml(teams, result.year, { extended: true, last5 });
+        html += standingsDivisionsHtml(teams, result.year, { extended: true, last5, vertical: verticalMql.matches });
       }
       wrap.innerHTML = html;
     }
+
+    // Re-order the columns if the screen flips between vertical and wide (e.g. rotating a phone).
+    const onScreenShapeChange = () => render(currentLast5);
+    if (verticalMql.addEventListener) verticalMql.addEventListener('change', onScreenShapeChange);
+    else if (verticalMql.addListener) verticalMql.addListener(onScreenShapeChange);
 
     // Show the standings immediately, then fill in Last 5 once the schedule arrives.
     render({ status: 'pending' });
