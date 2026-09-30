@@ -297,14 +297,14 @@ function setHeroBanner(heroEl, bannerSrc) {
 // --------------------------------------------------------------------------
 // Team logo card
 // Small rounded square card holding the team's logo, drawn from
-// assets/logos/{teamId}.webp (falls back to assets/logos/default.webp, then
-// hides just the image so an empty card never shows a broken-image icon).
+// assets/logos/{teamId}.webp. No default.webp placeholder is shipped, so a
+// missing logo (the historical/Negro League team ids, and id 14) just hides
+// the image cleanly on 404 instead of showing a broken-image icon.
 // teamLinkHtml() renders: [logo card] Team Name, as one link to the team page.
 // --------------------------------------------------------------------------
 function teamLogoCardHtml(teamId) {
   return `<span class="team-logo-card"><img src="assets/logos/${teamId}.webp" alt="" ` +
-    `onerror="if(!this.dataset.fb){this.dataset.fb='1';this.src='assets/logos/default.webp';}` +
-    `else{this.onerror=null;this.style.display='none';}"></span>`;
+    `onerror="this.onerror=null;this.style.display='none';"></span>`;
 }
 
 // League logo card: assets/leagues/al.webp (American) / nl.webp (National).
@@ -627,9 +627,7 @@ function runTeamPage() {
 
     setImgWithFallback(
       document.getElementById('team-logo'),
-      `assets/logos/${team.id}.webp`,
-      'assets/logos/default.webp'
-    );
+      `assets/logos/${team.id}.webp`);
     setHeroBanner(document.getElementById('hero'), `assets/banners/${team.id}.webp`);
 
     renderTrophies(team.trophies || {});
@@ -2505,8 +2503,8 @@ function runGamePage() {
         <img class="team-logo-sm" id="hdr-logo-home" alt="" style="width:36px;height:36px;">
       </span>`;
 
-    if (away) setImgWithFallback(document.getElementById('hdr-logo-away'), `assets/logos/${away.id}.webp`, 'assets/logos/default.webp');
-    if (home) setImgWithFallback(document.getElementById('hdr-logo-home'), `assets/logos/${home.id}.webp`, 'assets/logos/default.webp');
+    if (away) setImgWithFallback(document.getElementById('hdr-logo-away'), `assets/logos/${away.id}.webp`);
+    if (home) setImgWithFallback(document.getElementById('hdr-logo-home'), `assets/logos/${home.id}.webp`);
   }
 
   // --------------------------------------------------------------------------
@@ -2543,8 +2541,8 @@ function runGamePage() {
 
     table.innerHTML = head + body;
 
-    if (away) setImgWithFallback(document.getElementById('ls-logo-away'), `assets/logos/${away.id}.webp`, 'assets/logos/default.webp');
-    if (home) setImgWithFallback(document.getElementById('ls-logo-home'), `assets/logos/${home.id}.webp`, 'assets/logos/default.webp');
+    if (away) setImgWithFallback(document.getElementById('ls-logo-away'), `assets/logos/${away.id}.webp`);
+    if (home) setImgWithFallback(document.getElementById('ls-logo-home'), `assets/logos/${home.id}.webp`);
   }
 
   // --------------------------------------------------------------------------
@@ -2610,7 +2608,7 @@ function runGamePage() {
     }
 
     container.innerHTML = html;
-    setImgWithFallback(document.getElementById(`${logoIdPrefix}-header`), `assets/logos/${team.id}.webp`, 'assets/logos/default.webp');
+    setImgWithFallback(document.getElementById(`${logoIdPrefix}-header`), `assets/logos/${team.id}.webp`);
   }
 
   function renderBoxScore(game) {
@@ -2755,7 +2753,7 @@ function runGamePage() {
     plays.forEach((p, idx) => {
       const team = p.t === 0 ? away : home;
       if (team) {
-        setImgWithFallback(document.getElementById(`pbp-logo-${idx}`), `assets/logos/${team.id}.webp`, 'assets/logos/default.webp');
+        setImgWithFallback(document.getElementById(`pbp-logo-${idx}`), `assets/logos/${team.id}.webp`);
       }
     });
   }
