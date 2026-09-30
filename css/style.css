@@ -586,6 +586,10 @@ a.l5--l:hover { background: rgba(238, 115, 125, 0.28); border-color: rgba(238, 1
 a.l5--t { background: rgba(196, 200, 206, 0.12); border-color: rgba(196, 200, 206, 0.28); color: var(--text-secondary); }
 .ledger th.l5-col, .ledger td.l5-cell { text-align: center; }
 .l5-cell .dim { color: var(--text-tertiary); }
+
+/* Pct tint from the last five games (index standings only): soft, same greens/reds as the L5 chips. */
+.ledger td.pct-hot { color: #86d9a8; cursor: help; }
+.ledger td.pct-cold { color: #f2949c; cursor: help; }
 .l5-note {
   margin: 12px 0 0;
   font-size: 0.82rem;
