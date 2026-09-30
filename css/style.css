@@ -537,3 +537,20 @@ a.team-chip:hover .team-chip__name { color: var(--accent-hover); }
   text-transform: uppercase;
   color: var(--text-tertiary);
 }
+
+/* -------------------------------------------------------------------------
+   League headings (American League / National League)
+   Logo card from assets/leagues/ sits before the league name.
+   ------------------------------------------------------------------------- */
+.league-heading {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+.league-logo-card {
+  width: 36px;
+  height: 36px;
+}
+@media (max-width: 640px) {
+  .league-logo-card { width: 30px; height: 30px; }
+}
