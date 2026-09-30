@@ -487,6 +487,86 @@ function buildLastFive(schedule) {
 }
 
 /**
+ * Playoff format for a season: how many teams per league get in.
+ * perDivision = teams taken from each division (1 = winner only),
+ * wildCards   = extra teams per league from everyone left over.
+ * Returns null for seasons with no normal postseason (1981 split season, 1994 strike).
+ */
+function playoffFormat(year) {
+  const y = Number(year);
+  if (y === 1981 || y === 1994) return null;
+  if (y < 1995) return { perDivision: 1, wildCards: 0 };   // 1980-1993: division winners only
+  if (y < 2012) return { perDivision: 1, wildCards: 1 };   // 1995-2011: + 1 wild card
+  if (y === 2020) return { perDivision: 2, wildCards: 2 }; // 2020: top 2 per division + 2 wild cards
+  if (y < 2022) return { perDivision: 1, wildCards: 2 };   // 2012-2021: + 2 wild cards
+  return { perDivision: 1, wildCards: 3 };                 // 2022+: + 3 wild cards
+}
+
+/** Win percentage used for ranking: the stored pct, or W / (W + L) if pct is missing. */
+function standingsWinPct(t) {
+  const p = Number(t.pct);
+  if (t.pct !== null && t.pct !== undefined && t.pct !== '' && Number.isFinite(p)) return p;
+  const w = Number(t.w), l = Number(t.l);
+  return Number.isFinite(w) && Number.isFinite(l) && w + l > 0 ? w / (w + l) : null;
+}
+
+/**
+ * Works out, for the WHOLE season's team list (both leagues together):
+ *  - rank: team id -> rank by win percentage (1 = best; equal pct share a rank)
+ *  - spot: team id -> 'division' | 'runnerup' | 'wildcard' for teams in a playoff position
+ *  - total: how many teams were ranked
+ * Playoff spots: best team(s) of each division, then the best remaining teams
+ * in the league by win percentage. Tiebreak games aren't modelled.
+ */
+function computeSeasonMarks(allTeams, year) {
+  const rank = new Map();
+  const spot = new Map();
+  const scored = allTeams
+    .map(t => ({ t, p: standingsWinPct(t) }))
+    .filter(x => x.p !== null)
+    .sort((a, b) => b.p - a.p);
+
+  scored.forEach((x, i) => {
+    const prev = scored[i - 1];
+    rank.set(String(x.t.id), prev && prev.p === x.p ? rank.get(String(prev.t.id)) : i + 1);
+  });
+
+  const fmt = playoffFormat(year);
+  if (fmt) {
+    for (const rows of groupBy(scored, x => x.t.lg).values()) {
+      const taken = new Set();
+      const inDivision = rows.filter(x => divisionFor(x.t.id, year));
+      for (const divRows of groupBy(inDivision, x => divisionFor(x.t.id, year)).values()) {
+        divRows.slice(0, fmt.perDivision).forEach((x, i) => {
+          spot.set(String(x.t.id), i === 0 ? 'division' : 'runnerup');
+          taken.add(x);
+        });
+      }
+      rows.filter(x => !taken.has(x)).slice(0, fmt.wildCards)
+        .forEach(x => spot.set(String(x.t.id), 'wildcard'));
+    }
+  }
+  return { rank, spot, total: scored.length };
+}
+
+const PLAYOFF_SPOT_LABELS = {
+  division: 'Playoff spot: division leader',
+  runnerup: 'Playoff spot: division runner-up',
+  wildcard: 'Playoff spot: wild card',
+};
+
+/** Rank number + soft yellow dot shown before a team name (empty space kept for non-playoff teams so logos line up). */
+function teamMarkHtml(teamId, marks) {
+  const r = marks.rank.get(String(teamId));
+  const spot = marks.spot.get(String(teamId));
+  const rankTitle = r !== undefined ? `Rank ${r} of ${marks.total} by win percentage` : 'Not ranked';
+  const dot = spot
+    ? `<span class="po-dot" role="img" title="${PLAYOFF_SPOT_LABELS[spot]}" aria-label="${PLAYOFF_SPOT_LABELS[spot]}"></span>`
+    : `<span class="po-dot po-dot--none" aria-hidden="true"></span>`;
+  return `<span class="rk" title="${rankTitle}">${r !== undefined ? r : '—'}</span>${dot}`;
+}
+
+/**
  * Pct colouring rule (index standings only): looks at a team's last five
  * finished games. 3+ wins -> 'hot' (green), 3+ losses -> 'cold' (red).
  * Returns null (no colour) unless the last-five data is ready and the team
@@ -546,6 +626,7 @@ const STANDINGS_HEADERS = {
  * opts.vertical = true uses the vertical-screen column order
  *   (Last 5, W, L, PL, Pct, GB) instead of (PL, W, L, Pct, GB, Last 5).
  * opts.last5 = { status, byTeam, names } feeds the Last 5 column.
+ * opts.marks = computeSeasonMarks(...) adds a rank number and playoff dot before each team name.
  * Without opts the table is the plain Team / W / L / Pct / GB layout
  * (standings.html relies on that).
  */
@@ -588,7 +669,11 @@ function standingsDivisionsHtml(teams, year, opts = {}) {
       `<th class="left">Team</th>${columns.map(k => STANDINGS_HEADERS[k]).join('')}` +
       `</tr></thead><tbody>`;
     for (const t of rows) {
-      html += `<tr><td class="left">${teamLinkHtml(t.id, t.n || `Team ${t.id}`)}</td>` +
+      const teamCell = teamLinkHtml(t.id, t.n || `Team ${t.id}`);
+      const teamTd = opts.marks
+        ? `<span class="team-cell">${teamMarkHtml(t.id, opts.marks)}${teamCell}</span>`
+        : teamCell;
+      html += `<tr><td class="left">${teamTd}</td>` +
         `${columns.map(k => cell(k, t)).join('')}</tr>`;
     }
     html += `</tbody></table></div>`;
@@ -650,6 +735,9 @@ function runIndexPage() {
     const names = new Map();
     for (const t of result.data.teams) names.set(String(t.id), t.n || `Team ${t.id}`);
 
+    // rank + playoff spots are worked out once from the full season list (both leagues)
+    const marks = computeSeasonMarks(result.data.teams, result.year);
+
     const verticalMql = window.matchMedia(VERTICAL_SCREEN_QUERY);
     let currentLast5 = { status: 'pending' };
 
@@ -662,7 +750,7 @@ function runIndexPage() {
       for (const [lg, teams] of byLeague) {
         html += `<h3 class="league-heading" style="font-family:var(--font-body);font-size:0.92rem;font-weight:600;
           color:var(--text-secondary);margin:18px 0 8px;">${leagueLogoCardHtml(lg)}<span>${LEAGUE_NAMES[lg] || `League ${lg}`}</span></h3>`;
-        html += standingsDivisionsHtml(teams, result.year, { extended: true, last5, vertical: verticalMql.matches });
+        html += standingsDivisionsHtml(teams, result.year, { extended: true, last5, vertical: verticalMql.matches, marks });
       }
       wrap.innerHTML = html;
     }
@@ -1824,12 +1912,14 @@ function runStandingsPage() {
       byLeague.get(key).push(t);
     }
 
+    const marks = computeSeasonMarks(data.teams, year);
+
     let html = '';
     for (const [lg, teams] of byLeague) {
       teams.sort((a, b) => (b.pct ?? 0) - (a.pct ?? 0));
       html += `<h3 class="league-heading" style="font-family:var(--font-body);font-size:0.92rem;font-weight:600;
         color:var(--text-secondary);margin:18px 0 8px;">${leagueLogoCardHtml(lg)}<span>${LEAGUE_NAMES[lg] || `League ${lg}`}</span></h3>`;
-      html += standingsDivisionsHtml(teams, year);
+      html += standingsDivisionsHtml(teams, year, { marks });
     }
 
     wrap.innerHTML = html;
