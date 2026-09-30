@@ -661,9 +661,11 @@ function standingsHeaderHtml(key, sort) {
 }
 
 /**
- * Takes one league's standings rows and returns ONE table for them, sorted by
- * opts.sort (default: win percentage, best on top). Column headers are
- * clickable buttons (data-sort="<key>"); the page re-renders with the new sort.
+ * Takes one league's standings rows and returns the HTML for its divisions: a
+ * small East / Central / West heading followed by that division's table. Each
+ * division is sorted by opts.sort (default: win percentage, best on top).
+ * Column headers are clickable buttons (data-sort="<key>"); the page
+ * re-renders with the new sort.
  *
  * opts.extended = true adds PL (games played) and "Last 5".
  * opts.vertical = true uses the vertical-screen column order
@@ -700,18 +702,28 @@ function standingsTableHtml(teams, year, opts = {}) {
     }
   };
 
-  let html = `<div class="table-scroll"><table class="ledger${extended ? ' ledger--standings' : ''}"><thead><tr>` +
-    `<th class="left">Team</th>${columns.map(k => standingsHeaderHtml(k, sort)).join('')}` +
-    `</tr></thead><tbody>`;
-  for (const t of sortStandingsTeams(teams, sort)) {
-    const teamCell = teamLinkHtml(t.id, t.n || `Team ${t.id}`);
-    const teamTd = opts.spots
-      ? `<span class="team-cell">${playoffDotHtml(t.id, opts.spots)}${teamCell}</span>`
-      : teamCell;
-    html += `<tr><td class="left">${teamTd}</td>` +
-      `${columns.map(k => cell(k, t)).join('')}</tr>`;
+  const groups = new Map([['East', []], ['Central', []], ['West', []], ['Other', []]]);
+  for (const t of teams) {
+    groups.get(divisionFor(t.id, year) || 'Other').push(t);
   }
-  html += `</tbody></table></div>`;
+
+  let html = '';
+  for (const [division, rows] of groups) {
+    if (rows.length === 0) continue;
+    html += `<div class="division-label">${division}</div>`;
+    html += `<div class="table-scroll"><table class="ledger${extended ? ' ledger--standings' : ''}"><thead><tr>` +
+      `<th class="left">Team</th>${columns.map(k => standingsHeaderHtml(k, sort)).join('')}` +
+      `</tr></thead><tbody>`;
+    for (const t of sortStandingsTeams(rows, sort)) {
+      const teamCell = teamLinkHtml(t.id, t.n || `Team ${t.id}`);
+      const teamTd = opts.spots
+        ? `<span class="team-cell">${playoffDotHtml(t.id, opts.spots)}${teamCell}</span>`
+        : teamCell;
+      html += `<tr><td class="left">${teamTd}</td>` +
+        `${columns.map(k => cell(k, t)).join('')}</tr>`;
+    }
+    html += `</tbody></table></div>`;
+  }
   return html;
 }
 
