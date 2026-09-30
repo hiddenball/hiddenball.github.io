@@ -486,6 +486,23 @@ function buildLastFive(schedule) {
   return teams;
 }
 
+/**
+ * Pct colouring rule (index standings only): looks at a team's last five
+ * finished games. 3+ wins -> 'hot' (green), 3+ losses -> 'cold' (red).
+ * Returns null (no colour) unless the last-five data is ready and the team
+ * has a full five games, so partial data never shows a misleading colour.
+ */
+function pctTrend(teamId, last5) {
+  if (!last5 || last5.status !== 'ready') return null;
+  const list = last5.byTeam.get(String(teamId));
+  if (!list || list.length < 5) return null;
+  const wins = list.filter(r => r.outcome === 'W').length;
+  const losses = list.filter(r => r.outcome === 'L').length;
+  if (wins >= 3) return { cls: 'pct-hot', tip: `Won ${wins} of last 5` };
+  if (losses >= 3) return { cls: 'pct-cold', tip: `Lost ${losses} of last 5` };
+  return null;
+}
+
 /** One "Last 5" table cell. state = { status: 'pending'|'unavailable'|'ready', byTeam, names } */
 function lastFiveCellHtml(teamId, year, state) {
   if (!state || state.status === 'pending') return `<td class="l5-cell"><span class="dim">…</span></td>`;
@@ -551,7 +568,12 @@ function standingsDivisionsHtml(teams, year, opts = {}) {
       }
       case 'w': return `<td class="num">${t.w ?? '—'}</td>`;
       case 'l': return `<td class="num">${t.l ?? '—'}</td>`;
-      case 'pct': return `<td class="num">${t.pct !== undefined && t.pct !== null ? t.pct : '—'}</td>`;
+      case 'pct': {
+        const val = t.pct !== undefined && t.pct !== null ? t.pct : '—';
+        const trend = extended ? pctTrend(t.id, opts.last5) : null;
+        if (!trend) return `<td class="num">${val}</td>`;
+        return `<td class="num ${trend.cls}" title="${escapeHtml(trend.tip)}">${val}</td>`;
+      }
       case 'gb': return `<td class="num">${t.gb ?? '—'}</td>`;
       case 'last5': return lastFiveCellHtml(t.id, year, opts.last5);
       default: return '';
