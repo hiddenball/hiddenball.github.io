@@ -590,6 +590,18 @@ a.l5--t { background: rgba(196, 200, 206, 0.12); border-color: rgba(196, 200, 20
 /* Pct tint from the last five games (index standings only): soft, same greens/reds as the L5 chips. */
 .ledger td.pct-hot { color: #86d9a8; cursor: help; }
 .ledger td.pct-cold { color: #f2949c; cursor: help; }
+
+/* Rank number + soft yellow playoff dot, shown before each team name in standings. */
+.team-cell { display: inline-flex; align-items: center; }
+.rk { display: inline-block; min-width: 1.6em; margin-right: 6px; text-align: right;
+      color: var(--text-tertiary); font-size: 0.85em; font-variant-numeric: tabular-nums; }
+.po-dot { display: inline-block; flex: none; width: 8px; height: 8px; margin-right: 8px;
+          border-radius: 50%; background: #f0d675; opacity: 0.9; }
+.po-dot--none { background: transparent; }
+@media (max-width: 640px), (orientation: portrait) and (max-width: 900px) {
+  .rk { min-width: 1.4em; margin-right: 4px; }
+  .po-dot { width: 6px; height: 6px; margin-right: 5px; }
+}
 .l5-note {
   margin: 12px 0 0;
   font-size: 0.82rem;
