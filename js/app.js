@@ -367,12 +367,98 @@ function divisionFor(teamId, year) {
   return null;
 }
 
+// --------------------------------------------------------------------------
+// Last five games (index page standings)
+// Built from the season's schedule.json: each team's five most recent
+// finished regular-season games, oldest -> newest (rightmost = latest).
+// Each result is a W / L chip linking to that game's page.
+// --------------------------------------------------------------------------
+
+// gameType codes that are NOT regular-season games (postseason rounds,
+// spring training, exhibition, all-star, intrasquad). A game with no
+// gameType, or 'R', counts as regular season.
+const NON_REGULAR_GAME_TYPES = new Set(['F', 'D', 'L', 'W', 'S', 'E', 'A', 'P', 'I']);
+
+function escapeHtml(v) {
+  return String(v).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;').replace(/'/g, '&#39;');
+}
+
+/**
+ * Turns a season's schedule.json array into Map<teamId(string), result[]>,
+ * where each list holds that team's last five finished games (oldest first).
+ * result = { gamePk, date, outcome: 'W'|'L'|'T', us, them, oppId, home }
+ */
+function buildLastFive(schedule) {
+  const byPk = new Map();
+  for (const g of schedule) {
+    if (!g || g.gamePk === null || g.gamePk === undefined) continue;
+    if (g.status !== 'Final' && g.status !== 'Completed Early') continue;
+    if (g.gameType && NON_REGULAR_GAME_TYPES.has(g.gameType)) continue;
+    if (g.homeTeamId === null || g.homeTeamId === undefined ||
+        g.awayTeamId === null || g.awayTeamId === undefined) continue;
+    if (g.homeScore === null || g.homeScore === undefined ||
+        g.awayScore === null || g.awayScore === undefined) continue;
+    if (Number.isNaN(Number(g.homeScore)) || Number.isNaN(Number(g.awayScore))) continue;
+    // a postponed-then-replayed game can share a gamePk: keep only one copy (the latest)
+    const prev = byPk.get(String(g.gamePk));
+    if (!prev || String(g.date) >= String(prev.date)) byPk.set(String(g.gamePk), g);
+  }
+
+  const games = [...byPk.values()].sort((a, b) => {
+    const ta = Date.parse(a.date), tb = Date.parse(b.date);
+    if (!Number.isNaN(ta) && !Number.isNaN(tb) && ta !== tb) return ta - tb;
+    if (a.date !== b.date) return String(a.date) < String(b.date) ? -1 : 1;
+    return Number(a.gamePk) - Number(b.gamePk); // doubleheaders: game 1 first
+  });
+
+  const teams = new Map();
+  const push = (teamId, entry) => {
+    const key = String(teamId);
+    if (!teams.has(key)) teams.set(key, []);
+    teams.get(key).push(entry);
+  };
+  for (const g of games) {
+    const aw = Number(g.awayScore), hm = Number(g.homeScore);
+    const base = { gamePk: g.gamePk, date: g.date };
+    push(g.awayTeamId, { ...base, outcome: aw > hm ? 'W' : aw < hm ? 'L' : 'T',
+      us: aw, them: hm, oppId: g.homeTeamId, home: false });
+    push(g.homeTeamId, { ...base, outcome: hm > aw ? 'W' : hm < aw ? 'L' : 'T',
+      us: hm, them: aw, oppId: g.awayTeamId, home: true });
+  }
+  for (const [key, list] of teams) teams.set(key, list.slice(-5));
+  return teams;
+}
+
+/** One "Last 5" table cell. state = { status: 'pending'|'unavailable'|'ready', byTeam, names } */
+function lastFiveCellHtml(teamId, year, state) {
+  if (!state || state.status === 'pending') return `<td class="left l5-cell"><span class="dim">…</span></td>`;
+  const list = state.status === 'ready' ? state.byTeam.get(String(teamId)) : null;
+  if (!list || list.length === 0) return `<td class="left l5-cell"><span class="dim">—</span></td>`;
+
+  const chips = list.map(r => {
+    const opp = state.names.get(String(r.oppId)) || `Team ${r.oppId}`;
+    const day = new Date(r.date).toLocaleDateString('en-US', { timeZone: 'UTC', month: 'short', day: 'numeric', year: 'numeric' });
+    const label = `${r.outcome} ${r.us}\u2013${r.them} ${r.home ? 'vs.' : '@'} ${opp}, ${day}`;
+    const cls = r.outcome === 'W' ? 'l5--w' : r.outcome === 'L' ? 'l5--l' : 'l5--t';
+    return `<a class="l5 ${cls}" href="game.html?id=${encodeURIComponent(r.gamePk)}&year=${encodeURIComponent(year)}" ` +
+      `title="${escapeHtml(label)}" aria-label="${escapeHtml(label)}">${r.outcome}</a>`;
+  }).join('');
+  return `<td class="left l5-cell"><span class="l5-strip">${chips}</span></td>`;
+}
+
 /**
  * Takes one league's standings rows (already sorted) and returns the HTML for
  * its divisions: a small East / Central / West heading followed by that
  * division's table. Order within each division is preserved from `teams`.
+ *
+ * opts.extended = true adds PL (games played) before W and "Last 5" after GB.
+ * opts.last5 = { status, byTeam, names } feeds the Last 5 column.
+ * Without opts the table is the plain Team / W / L / Pct / GB layout
+ * (standings.html relies on that).
  */
-function standingsDivisionsHtml(teams, year) {
+function standingsDivisionsHtml(teams, year, opts = {}) {
+  const extended = !!opts.extended;
   const groups = new Map([['East', []], ['Central', []], ['West', []], ['Other', []]]);
   for (const t of teams) {
     groups.get(divisionFor(t.id, year) || 'Other').push(t);
@@ -383,15 +469,19 @@ function standingsDivisionsHtml(teams, year) {
     if (rows.length === 0) continue;
     html += `<div class="division-label">${division}</div>`;
     html += `<div class="table-scroll"><table class="ledger"><thead><tr>
-      <th class="left">Team</th><th>W</th><th>L</th><th>Pct</th><th>GB</th>
+      <th class="left">Team</th>${extended ? '<th title="Games played">PL</th>' : ''}<th>W</th><th>L</th><th>Pct</th><th>GB</th>${extended ? '<th class="left">Last 5</th>' : ''}
     </tr></thead><tbody>`;
     for (const t of rows) {
+      const played = (Number.isFinite(Number(t.w)) && Number.isFinite(Number(t.l)) && t.w !== null && t.l !== null && t.w !== undefined && t.l !== undefined)
+        ? Number(t.w) + Number(t.l) : '—';
       html += `<tr>
         <td class="left">${teamLinkHtml(t.id, t.n || `Team ${t.id}`)}</td>
+        ${extended ? `<td class="num">${played}</td>` : ''}
         <td class="num">${t.w ?? '—'}</td>
         <td class="num">${t.l ?? '—'}</td>
         <td class="num">${t.pct !== undefined && t.pct !== null ? t.pct : '—'}</td>
         <td class="num">${t.gb ?? '—'}</td>
+        ${extended ? lastFiveCellHtml(t.id, year, opts.last5) : ''}
       </tr>`;
     }
     html += `</tbody></table></div>`;
@@ -445,18 +535,42 @@ function runIndexPage() {
       if (!byLeague.has(key)) byLeague.set(key, []);
       byLeague.get(key).push(t);
     }
-
-    let html = '';
-    for (const [lg, teams] of byLeague) {
+    for (const teams of byLeague.values()) {
       teams.sort((a, b) => (b.pct ?? 0) - (a.pct ?? 0));
-      html += `<h3 class="league-heading" style="font-family:var(--font-body);font-size:0.92rem;font-weight:600;
-        color:var(--text-secondary);margin:18px 0 8px;">${leagueLogoCardHtml(lg)}<span>${LEAGUE_NAMES[lg] || `League ${lg}`}</span></h3>`;
-      html += standingsDivisionsHtml(teams, result.year);
     }
 
-    wrap.innerHTML = html;
+    // team id -> name, used for the hover text on each last-five result
+    const names = new Map();
+    for (const t of result.data.teams) names.set(String(t.id), t.n || `Team ${t.id}`);
+
+    function render(last5) {
+      let html = '';
+      if (last5.status === 'unavailable') {
+        html += `<p class="l5-note">Last 5 results aren't available for ${result.year} yet (no season schedule file for this season).</p>`;
+      }
+      for (const [lg, teams] of byLeague) {
+        html += `<h3 class="league-heading" style="font-family:var(--font-body);font-size:0.92rem;font-weight:600;
+          color:var(--text-secondary);margin:18px 0 8px;">${leagueLogoCardHtml(lg)}<span>${LEAGUE_NAMES[lg] || `League ${lg}`}</span></h3>`;
+        html += standingsDivisionsHtml(teams, result.year, { extended: true, last5 });
+      }
+      wrap.innerHTML = html;
+    }
+
+    // Show the standings immediately, then fill in Last 5 once the schedule arrives.
+    render({ status: 'pending' });
     clearStatus(statusEl);
     wrap.hidden = false;
+
+    let schedule = null;
+    try {
+      schedule = await fetchSeasonFile(manifest, result.year, 'schedule.json');
+    } catch (_) { /* treated as unavailable below */ }
+
+    if (Array.isArray(schedule)) {
+      render({ status: 'ready', byTeam: buildLastFive(schedule), names });
+    } else {
+      render({ status: 'unavailable' });
+    }
   }
 
   // --------------------------------------------------------------------------
