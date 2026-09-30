@@ -471,3 +471,59 @@ img { max-width: 100%; height: auto; }
 
   #team-search, #player-search, #manager-search { max-width: 100%; }
 }
+
+/* -------------------------------------------------------------------------
+   Team logo cards
+   Added: a rounded square card holding the team's logo, placed before the
+   team name everywhere a team is listed (standings, games, scores, player /
+   manager history, postseason, draft, awards) and on the Teams browse grid.
+   Rendered by teamLinkHtml() / teamLogoCardHtml() in app.js.
+   The card is a light tile so dark logos stay visible on the dark theme.
+   ------------------------------------------------------------------------- */
+.team-logo-card {
+  flex: 0 0 auto;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 32px;
+  height: 32px;
+  padding: 4px;
+  background: var(--text-primary);
+  border: 1px solid var(--border-strong);
+  border-radius: 8px;
+  overflow: hidden;
+}
+.team-logo-card img {
+  width: 100%;
+  height: 100%;
+  object-fit: contain;
+  display: block;
+}
+
+/* (logo card) (team name) as one link */
+a.team-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 10px;
+  vertical-align: middle;
+  border-bottom: 1px solid transparent;
+}
+a.team-chip:hover { border-bottom-color: transparent; }
+a.team-chip:hover .team-chip__name { color: var(--accent-hover); }
+
+/* Teams browse grid: logo card on the left, name beside it */
+.entity-card--logo {
+  flex-direction: row;
+  align-items: center;
+  gap: 12px;
+}
+.entity-card--logo .team-logo-card {
+  width: 40px;
+  height: 40px;
+}
+
+@media (max-width: 640px) {
+  .team-logo-card { width: 28px; height: 28px; padding: 3px; border-radius: 7px; }
+  a.team-chip { gap: 8px; }
+  .entity-card--logo .team-logo-card { width: 34px; height: 34px; }
+}
