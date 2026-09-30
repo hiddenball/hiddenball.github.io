@@ -478,18 +478,13 @@ img { max-width: 100%; height: auto; }
    team name everywhere a team is listed (standings, games, scores, player /
    manager history, postseason, draft, awards) and on the Teams browse grid.
    Rendered by teamLinkHtml() / teamLogoCardHtml() in app.js.
-   The card is a light tile so dark logos stay visible on the dark theme.
+   No background or border: the card is just the logo with rounded corners.
    ------------------------------------------------------------------------- */
 .team-logo-card {
   flex: 0 0 auto;
   display: inline-flex;
-  align-items: center;
-  justify-content: center;
   width: 32px;
   height: 32px;
-  padding: 4px;
-  background: var(--text-primary);
-  border: 1px solid var(--border-strong);
   border-radius: 8px;
   overflow: hidden;
 }
@@ -497,6 +492,7 @@ img { max-width: 100%; height: auto; }
   width: 100%;
   height: 100%;
   object-fit: contain;
+  border-radius: 8px;
   display: block;
 }
 
@@ -523,7 +519,8 @@ a.team-chip:hover .team-chip__name { color: var(--accent-hover); }
 }
 
 @media (max-width: 640px) {
-  .team-logo-card { width: 28px; height: 28px; padding: 3px; border-radius: 7px; }
+  .team-logo-card, .team-logo-card img { border-radius: 7px; }
+  .team-logo-card { width: 28px; height: 28px; }
   a.team-chip { gap: 8px; }
   .entity-card--logo .team-logo-card { width: 34px; height: 34px; }
 }
