@@ -605,3 +605,27 @@ a.l5--t { background: rgba(196, 200, 206, 0.12); border-color: rgba(196, 200, 20
   .tn-full { display: none; }
   .tn-short { display: inline; }
 }
+
+/* -------------------------------------------------------------------------
+   Vertical screens: compact standings table so Team + Last 5 + W L PL Pct GB
+   fit side by side. Column order itself is set in standingsDivisionsHtml().
+   ------------------------------------------------------------------------- */
+@media (max-width: 640px), (orientation: portrait) and (max-width: 900px) {
+  .ledger--standings { font-size: 0.78rem; }
+  .ledger--standings th, .ledger--standings td { padding: 6px 3px; }
+  .ledger--standings th:first-child, .ledger--standings td:first-child { padding-left: 6px; }
+  .ledger--standings .team-logo-card { width: 20px; height: 20px; }
+  .ledger--standings a.team-chip { gap: 5px; }
+  .ledger--standings .l5-strip { gap: 2px; }
+  .ledger--standings a.l5 { width: 18px; height: 18px; font-size: 0.64rem; }
+}
+
+/* Narrower phones (about 380px and under): squeeze the standings table a bit more. */
+@media (max-width: 380px) {
+  .ledger--standings { font-size: 0.74rem; }
+  .ledger--standings th, .ledger--standings td { padding: 6px 2px; }
+  .ledger--standings th:first-child, .ledger--standings td:first-child { padding-left: 5px; }
+  .ledger--standings .team-logo-card { width: 18px; height: 18px; }
+  .ledger--standings a.team-chip { gap: 4px; }
+  .ledger--standings a.l5 { width: 16px; height: 16px; font-size: 0.6rem; }
+}
