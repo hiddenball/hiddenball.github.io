@@ -1223,9 +1223,9 @@ function runTeamPage() {
   }
 
   /**
-   * Last five games for this team, newest first. Each card shows the OPPONENT's
+   * Last five games for this team, oldest -> newest (the latest is on the far right). Each card shows the OPPONENT's
    * logo with this team's score underneath (this team's runs first): green if
-   * this team won, red if it lost. A game being played right now takes the first
+   * this team won, red if it lost. A game being played right now takes the last (far right)
    * card (pulsing red dot, red score) and is also pinned in the "Latest game"
    * block above; the other 4 cards are the latest finished games.
    * Starts at the current year and walks back until a season has games for
@@ -1301,10 +1301,11 @@ function runTeamPage() {
         liveEntry ? resolveTeamName(liveEntry.oppId) : Promise.resolve(null),
       ]);
 
+      // left -> right = oldest -> newest, so the latest game (or the live one) is on the far right
       const cards = [];
-      if (liveEntry) cards.push(liveCardHtml(liveEntry, liveOpp));
       const room = liveEntry ? 4 : 5;
-      for (let i = 0; i < finished.length && i < room; i++) cards.push(finishedCardHtml(finished[i], names[i], year));
+      for (let i = Math.min(room, finished.length) - 1; i >= 0; i--) cards.push(finishedCardHtml(finished[i], names[i], year));
+      if (liveEntry) cards.push(liveCardHtml(liveEntry, liveOpp));
       grid.innerHTML = cards.join('');
 
       heading.textContent = `Last 5 games \u2014 ${year} season`;
