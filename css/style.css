@@ -813,3 +813,98 @@ a.matchup:hover { border-color: var(--border-strong); }
   .mu-score { height: 64px; font-size: 1.6rem; gap: 6px; }
   .mu-name { font-size: 0.85rem; }
 }
+
+/* -------------------------------------------------------------------------
+   Live games
+   A game being played right now is marked with a pulsing red dot:
+   - index standings "Last 5": the newest chip (a.l5--live)
+   - team page "Last 5 games": the first card (a.rg--live) with a red score
+   - team page pinned card: a LIVE strip on top (.mu-live, a.matchup--live)
+   - game page: a LIVE badge next to the date (.live-badge)
+   Rendered by lastFiveCellHtml(), loadRecentGames(), renderLiveMatchup()
+   and renderHeader() in app.js.
+   ------------------------------------------------------------------------- */
+.live-dot {
+  display: inline-block;
+  flex: none;
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: #ff4d5e;
+  box-shadow: 0 0 0 0 rgba(255, 77, 94, 0.55);
+  animation: live-pulse 1.6s ease-out infinite;
+}
+@keyframes live-pulse {
+  0%   { box-shadow: 0 0 0 0 rgba(255, 77, 94, 0.55); }
+  70%  { box-shadow: 0 0 0 7px rgba(255, 77, 94, 0); }
+  100% { box-shadow: 0 0 0 0 rgba(255, 77, 94, 0); }
+}
+@media (prefers-reduced-motion: reduce) {
+  .live-dot { animation: none; }
+}
+
+/* index standings: live chip */
+a.l5--live { background: rgba(255, 77, 94, 0.16); border-color: rgba(255, 77, 94, 0.4); }
+a.l5--live:hover { background: rgba(255, 77, 94, 0.28); border-color: rgba(255, 77, 94, 0.6); }
+a.l5--live .live-dot { width: 7px; height: 7px; }
+@media (max-width: 640px), (orientation: portrait) and (max-width: 900px) {
+  a.l5--live .live-dot { width: 6px; height: 6px; }
+}
+
+/* team page: live card in the Last 5 grid */
+a.rg-card.rg--live,
+a.rg-card.rg--live:hover { position: relative; border-color: rgba(255, 77, 94, 0.5); }
+a.rg--live .rg-score { color: #ff8a95; }
+.rg-live-dot { position: absolute; top: 8px; right: 8px; }
+@media (max-width: 640px) {
+  .rg-live-dot { top: 6px; right: 6px; width: 6px; height: 6px; }
+}
+
+/* team page: pinned live game (the "Latest game" card while the team is playing) */
+a.matchup.matchup--live,
+a.matchup.matchup--live:hover,
+.matchup--live { border-color: rgba(255, 77, 94, 0.5); }
+.mu-live {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  margin: -4px 0 16px;
+  font-size: 0.75rem;
+  font-weight: 600;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: #ff8a95;
+}
+.mu-live__state {
+  padding-left: 8px;
+  border-left: 1px solid rgba(255, 77, 94, 0.35);
+  font-weight: 500;
+  letter-spacing: 0.04em;
+  color: var(--text-secondary);
+}
+
+/* game page: LIVE badge next to the date */
+.live-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  margin-left: 8px;
+  padding: 2px 8px;
+  border: 1px solid rgba(255, 77, 94, 0.4);
+  border-radius: var(--radius);
+  background: rgba(255, 77, 94, 0.14);
+  font-size: 0.72rem;
+  font-weight: 600;
+  line-height: 1.4;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: #ff8a95;
+  vertical-align: middle;
+}
+.live-badge__state {
+  padding-left: 6px;
+  border-left: 1px solid rgba(255, 77, 94, 0.35);
+  font-weight: 500;
+  color: var(--text-secondary);
+}
