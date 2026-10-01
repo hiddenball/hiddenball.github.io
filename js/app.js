@@ -493,6 +493,119 @@ function buildLastFive(schedule) {
 }
 
 /**
+ * Full list of finished games for one season, from whichever source is freshest.
+ * The current season is read from MLB's schedule API FIRST, because a
+ * schedule.json that exists for it in the data repo can be days behind (that is
+ * what made "Last 5" look old). If the API is unreachable, schedule.json is the
+ * fallback. Older seasons read schedule.json, with the API only as a last resort
+ * for last season. Returns an array, or null if nothing could be loaded.
+ */
+async function fetchSeasonSchedule(manifest, year) {
+  const thisYear = new Date().getFullYear();
+
+  if (Number(year) >= thisYear) {
+    try {
+      const fresh = await fetchScheduleFromStatsApi(year);
+      if (Array.isArray(fresh) && fresh.length > 0) return fresh;
+    } catch (_) { /* fall through to schedule.json */ }
+  }
+
+  let schedule = null;
+  try {
+    schedule = await fetchSeasonFile(manifest, year, 'schedule.json');
+  } catch (_) { /* fall through to the MLB schedule API below */ }
+
+  if (!Array.isArray(schedule) && Number(year) >= thisYear - 1) {
+    try {
+      schedule = await fetchScheduleFromStatsApi(year);
+    } catch (_) { schedule = null; }
+  }
+  return Array.isArray(schedule) ? schedule : null;
+}
+
+// --------------------------------------------------------------------------
+// Live games
+// A small, cheap request (yesterday..tomorrow, so a few dozen games) that lists
+// every game being played right now. Used by the index Last 5 column, the team
+// page (pinned live card + Last 5 cards) and polled every LIVE_POLL_MS.
+// --------------------------------------------------------------------------
+const LIVE_POLL_MS = 30000;
+
+function liveStateLabel(detailedState, linescore) {
+  if (/delay/i.test(detailedState || '')) return 'Delayed';
+  const ls = linescore || {};
+  if (ls.currentInningOrdinal && ls.inningState) return `${ls.inningState} ${ls.currentInningOrdinal}`;
+  if (ls.currentInningOrdinal) return `${ls.currentInningOrdinal} inning`;
+  return 'In progress';
+}
+
+/**
+ * Games in progress right now (regular season + postseason; never spring
+ * training / exhibition / all-star). Throws on a network / HTTP problem so
+ * callers can keep whatever they were already showing.
+ * -> [{ gamePk, season, date, gameType, awayTeamId, homeTeamId, awayScore, homeScore, label }]
+ */
+async function fetchLiveGames() {
+  const day = (offset) => new Date(Date.now() + offset * 86400000).toISOString().slice(0, 10);
+  const fields = 'dates,games,gamePk,season,gameDate,gameType,status,abstractGameState,detailedState,' +
+    'teams,away,home,team,id,score,linescore,currentInning,currentInningOrdinal,inningState';
+  const url = `https://statsapi.mlb.com/api/v1/schedule?sportId=1&startDate=${day(-1)}&endDate=${day(1)}` +
+    `&hydrate=linescore&fields=${fields}`;
+  const res = await fetch(url);
+  if (!res.ok) throw new Error(`${res.status} fetching live MLB games`);
+  const data = await res.json();
+
+  const out = [];
+  for (const d of (data && data.dates) || []) {
+    for (const g of d.games || []) {
+      const st = g.status || {};
+      const state = st.detailedState || '';
+      if (st.abstractGameState !== 'Live') continue;
+      if (/^(Final|Game Over|Completed Early|Postponed|Suspended|Cancelled|Pre-Game|Warmup|Scheduled)/i.test(state)) continue;
+      if (g.gameType && NON_REGULAR_GAME_TYPES.has(g.gameType)) continue;
+      const away = g.teams && g.teams.away, home = g.teams && g.teams.home;
+      if (!away || !home || !away.team || !home.team) continue;
+      const ls = g.linescore || {};
+      const inning = Number(ls.currentInning);
+      if (Number.isFinite(inning) && inning < 1) continue; // not actually underway yet
+      const date = g.gameDate;
+      const season = Number(g.season) || new Date(date).getUTCFullYear() || new Date().getFullYear();
+      out.push({
+        gamePk: g.gamePk,
+        season,
+        date,
+        gameType: g.gameType,
+        awayTeamId: away.team.id,
+        homeTeamId: home.team.id,
+        awayScore: Number(away.score) || 0,
+        homeScore: Number(home.score) || 0,
+        label: liveStateLabel(state, ls),
+      });
+    }
+  }
+  return out;
+}
+
+/** Map<teamId(string), { gamePk, season, date, outcome:'LIVE', us, them, oppId, home, label }> */
+function liveByTeam(list) {
+  const m = new Map();
+  for (const g of list || []) {
+    const base = { gamePk: g.gamePk, season: g.season, date: g.date, outcome: 'LIVE', label: g.label };
+    m.set(String(g.awayTeamId), { ...base, us: g.awayScore, them: g.homeScore, oppId: g.homeTeamId, home: false });
+    m.set(String(g.homeTeamId), { ...base, us: g.homeScore, them: g.awayScore, oppId: g.awayTeamId, home: true });
+  }
+  return m;
+}
+
+/** Cheap "did anything change?" fingerprints, so a poll only re-renders when it has to. */
+function liveSig(entry) {
+  return entry ? `${entry.gamePk}|${entry.us}|${entry.them}|${entry.label}` : '';
+}
+function liveListSig(list) {
+  return (list || []).map(g => `${g.gamePk}|${g.awayScore}|${g.homeScore}|${g.label}`).sort().join(',');
+}
+
+/**
  * Playoff format for a season: how many teams per league get in.
  * perDivision = teams taken from each division (1 = winner only),
  * wildCards   = extra teams per league from everyone left over.
@@ -578,11 +691,26 @@ function pctTrend(teamId, last5) {
   return null;
 }
 
-/** One "Last 5" table cell. state = { status: 'pending'|'unavailable'|'ready', byTeam, names } */
+/**
+ * One "Last 5" table cell. state = { status: 'pending'|'unavailable'|'ready', byTeam, names, live }
+ * state.live (optional) is a Map<teamId, live entry>: a game in progress takes the newest
+ * (rightmost) slot as a pulsing red dot, so the strip shows the 4 latest finished games + the live one.
+ */
 function lastFiveCellHtml(teamId, year, state) {
   if (!state || state.status === 'pending') return `<td class="l5-cell"><span class="dim">…</span></td>`;
-  const list = state.status === 'ready' ? state.byTeam.get(String(teamId)) : null;
-  if (!list || list.length === 0) return `<td class="l5-cell"><span class="dim">—</span></td>`;
+  let list = state.status === 'ready' ? state.byTeam.get(String(teamId)) : null;
+  const liveEntry = state.status === 'ready' && state.live ? state.live.get(String(teamId)) : null;
+  if ((!list || list.length === 0) && !liveEntry) return `<td class="l5-cell"><span class="dim">—</span></td>`;
+  list = list || [];
+  if (liveEntry) list = list.slice(-4);
+
+  let liveChip = '';
+  if (liveEntry) {
+    const opp = state.names.get(String(liveEntry.oppId)) || `Team ${liveEntry.oppId}`;
+    const label = `LIVE ${liveEntry.us}\u2013${liveEntry.them} ${liveEntry.home ? 'vs.' : '@'} ${opp}, ${liveEntry.label}`;
+    liveChip = `<a class="l5 l5--live" href="game.html?id=${encodeURIComponent(liveEntry.gamePk)}&year=${encodeURIComponent(year)}" ` +
+      `title="${escapeHtml(label)}" aria-label="${escapeHtml(label)}"><span class="live-dot" aria-hidden="true"></span></a>`;
+  }
 
   const chips = list.map(r => {
     const opp = state.names.get(String(r.oppId)) || `Team ${r.oppId}`;
@@ -592,7 +720,7 @@ function lastFiveCellHtml(teamId, year, state) {
     return `<a class="l5 ${cls}" href="game.html?id=${encodeURIComponent(r.gamePk)}&year=${encodeURIComponent(year)}" ` +
       `title="${escapeHtml(label)}" aria-label="${escapeHtml(label)}">${r.outcome}</a>`;
   }).join('');
-  return `<td class="l5-cell"><span class="l5-strip">${chips}</span></td>`;
+  return `<td class="l5-cell"><span class="l5-strip">${chips}${liveChip}</span></td>`;
 }
 
 // Same rule the stylesheet uses for "vertical screens" (nicknames + compact table).
@@ -826,23 +954,49 @@ function runIndexPage() {
     clearStatus(statusEl);
     wrap.hidden = false;
 
-    let schedule = null;
-    try {
-      schedule = await fetchSeasonFile(manifest, result.year, 'schedule.json');
-    } catch (_) { /* fall through to the MLB schedule API below */ }
+    // Finished games (freshest source for the current season) + games being played right now.
+    const seasonIsCurrent = Number(result.year) >= new Date().getFullYear();
+    const [schedule, liveInitial] = await Promise.all([
+      fetchSeasonSchedule(manifest, result.year),
+      seasonIsCurrent ? fetchLiveGames().catch(() => []) : Promise.resolve([]),
+    ]);
 
-    // No schedule.json for this season (the current season): use MLB's schedule API instead.
-    if (!Array.isArray(schedule)) {
-      try {
-        schedule = await fetchScheduleFromStatsApi(result.year);
-      } catch (_) { schedule = null; }
-    }
-
-    if (Array.isArray(schedule) && schedule.length > 0) {
-      render({ status: 'ready', byTeam: buildLastFive(schedule), names });
-    } else {
+    if (!(Array.isArray(schedule) && schedule.length > 0)) {
       render({ status: 'unavailable' });
+      return;
     }
+
+    let finishedByTeam = buildLastFive(schedule);
+    let liveList = liveInitial;
+    render({ status: 'ready', byTeam: finishedByTeam, names, live: liveByTeam(liveList) });
+
+    // Keep live games up to date. Only for the current season; an older season has nothing live.
+    if (!seasonIsCurrent) return;
+    let busy = false;
+    let finishedRetries = 0; // after a game ends, re-read the finished list a few times until it shows up there
+    setInterval(async () => {
+      if (busy || document.hidden) return;
+      busy = true;
+      try {
+        const next = await fetchLiveGames();
+        const ended = liveList.some(p => !next.some(n => String(n.gamePk) === String(p.gamePk)));
+        const changed = liveListSig(next) !== liveListSig(liveList);
+        if (ended) finishedRetries = 3;
+
+        let refetched = false;
+        if (finishedRetries > 0) {
+          finishedRetries--;
+          const fresh = await fetchSeasonSchedule(manifest, result.year);
+          if (Array.isArray(fresh) && fresh.length > 0) { finishedByTeam = buildLastFive(fresh); refetched = true; }
+        }
+
+        liveList = next;
+        if (changed || refetched) {
+          render({ status: 'ready', byTeam: finishedByTeam, names, live: liveByTeam(liveList) });
+        }
+      } catch (_) { /* a failed refresh keeps what is already on screen */ }
+      finally { busy = false; }
+    }, LIVE_POLL_MS);
   }
 
   // --------------------------------------------------------------------------
@@ -1069,13 +1223,15 @@ function runTeamPage() {
   }
 
   /**
-   * Last five finished regular-season games for this team, newest first. Each
-   * card shows the OPPONENT's logo with this team's score underneath
-   * (this team's runs first): green if this team won, red if it lost.
+   * Last five games for this team, newest first. Each card shows the OPPONENT's
+   * logo with this team's score underneath (this team's runs first): green if
+   * this team won, red if it lost. A game being played right now takes the first
+   * card (pulsing red dot, red score) and is also pinned in the "Latest game"
+   * block above; the other 4 cards are the latest finished games.
    * Starts at the current year and walks back until a season has games for
    * this team (early in a year, or for a defunct franchise, the newest season
-   * may have none). Seasons with no schedule.json (the current one) fall back
-   * to MLB's schedule API, same as the index page's Last 5 column.
+   * may have none). The current season is read from MLB's schedule API first
+   * (see fetchSeasonSchedule), and live games are re-checked every LIVE_POLL_MS.
    */
   async function loadRecentGames(manifest, teamId, teamName) {
     const statusEl2 = document.getElementById('recent-status');
@@ -1083,64 +1239,162 @@ function runTeamPage() {
     const heading = document.getElementById('recent-heading');
     setStatus(statusEl2, 'Loading recent games\u2026');
 
-    try {
+    const resolveTeamName = createTeamNameResolver(manifest);
+    let found = null;      // { year, list } finished games, oldest -> newest
+    let liveEntry = null;  // this team's game in progress, or null
+    let busy = false;
+    let finishedRetries = 0;
+
+    async function findFinished() {
       const thisYear = new Date().getFullYear();
-      let found = null;
-
       for (let y = thisYear; y >= 1980; y--) {
-        let schedule = null;
-        try {
-          schedule = await fetchSeasonFile(manifest, y, 'schedule.json');
-        } catch (_) { /* fall through to the MLB schedule API below */ }
-
-        if (!Array.isArray(schedule) && y >= thisYear - 1) {
-          try {
-            schedule = await fetchScheduleFromStatsApi(y);
-          } catch (_) { schedule = null; }
-        }
-
+        const schedule = await fetchSeasonSchedule(manifest, y);
         if (Array.isArray(schedule) && schedule.length > 0) {
           const list = buildLastFive(schedule).get(String(teamId));
-          if (list && list.length > 0) { found = { year: y, list }; break; }
+          if (list && list.length > 0) return { year: y, list };
         }
       }
+      return null;
+    }
 
-      if (!found) {
-        setStatus(statusEl2, 'No completed games found for this team in the archive.');
-        return;
-      }
+    function finishedCardHtml(r, oppName, year) {
+      const cls = r.outcome === 'W' ? 'rg--w' : r.outcome === 'L' ? 'rg--l' : 'rg--t';
+      const verb = r.outcome === 'W' ? 'Won' : r.outcome === 'L' ? 'Lost' : 'Tied';
+      const day = new Date(r.date).toLocaleDateString('en-US',
+        { timeZone: 'UTC', month: 'short', day: 'numeric', year: 'numeric' });
+      const label = `${verb} ${r.us}\u2013${r.them} ${r.home ? 'vs.' : '@'} ${oppName}, ${day}`;
+      const href = `game.html?id=${encodeURIComponent(r.gamePk)}&year=${encodeURIComponent(year)}`;
+      return `<a class="rg-card ${cls}" href="${href}" title="${escapeHtml(label)}" aria-label="${escapeHtml(label)}">` +
+        `<span class="rg-logo">` +
+          `<img src="assets/logos/${encodeURIComponent(r.oppId)}.webp" alt="" ` +
+            `onerror="this.onerror=null;this.style.display='none';this.nextElementSibling.hidden=false;">` +
+          `<span class="rg-logo__fb" hidden>${escapeHtml(shortTeamName(oppName))}</span>` +
+        `</span>` +
+        `<span class="rg-score">${r.us}&ndash;${r.them}</span>` +
+      `</a>`;
+    }
 
-      const resolveTeamName = createTeamNameResolver(manifest);
-      const games = found.list.slice().reverse(); // newest first
-      const names = await Promise.all(games.map(r => resolveTeamName(r.oppId)));
+    function liveCardHtml(l, oppName) {
+      const label = `LIVE: ${l.us}\u2013${l.them} ${l.home ? 'vs.' : '@'} ${oppName}, ${l.label}`;
+      const href = `game.html?id=${encodeURIComponent(l.gamePk)}&year=${encodeURIComponent(l.season)}`;
+      return `<a class="rg-card rg--live" href="${href}" title="${escapeHtml(label)}" aria-label="${escapeHtml(label)}">` +
+        `<span class="live-dot rg-live-dot" aria-hidden="true"></span>` +
+        `<span class="rg-logo">` +
+          `<img src="assets/logos/${encodeURIComponent(l.oppId)}.webp" alt="" ` +
+            `onerror="this.onerror=null;this.style.display='none';this.nextElementSibling.hidden=false;">` +
+          `<span class="rg-logo__fb" hidden>${escapeHtml(shortTeamName(oppName))}</span>` +
+        `</span>` +
+        `<span class="rg-score">${l.us}&ndash;${l.them}</span>` +
+      `</a>`;
+    }
 
-      grid.innerHTML = games.map((r, i) => {
-        const oppName = names[i];
-        const cls = r.outcome === 'W' ? 'rg--w' : r.outcome === 'L' ? 'rg--l' : 'rg--t';
-        const verb = r.outcome === 'W' ? 'Won' : r.outcome === 'L' ? 'Lost' : 'Tied';
-        const day = new Date(r.date).toLocaleDateString('en-US',
-          { timeZone: 'UTC', month: 'short', day: 'numeric', year: 'numeric' });
-        const label = `${verb} ${r.us}\u2013${r.them} ${r.home ? 'vs.' : '@'} ${oppName}, ${day}`;
-        const href = `game.html?id=${encodeURIComponent(r.gamePk)}&year=${encodeURIComponent(found.year)}`;
-        return `<a class="rg-card ${cls}" href="${href}" title="${escapeHtml(label)}" aria-label="${escapeHtml(label)}">` +
-          `<span class="rg-logo">` +
-            `<img src="assets/logos/${encodeURIComponent(r.oppId)}.webp" alt="" ` +
-              `onerror="this.onerror=null;this.style.display='none';this.nextElementSibling.hidden=false;">` +
-            `<span class="rg-logo__fb" hidden>${escapeHtml(shortTeamName(oppName))}</span>` +
-          `</span>` +
-          `<span class="rg-score">${r.us}&ndash;${r.them}</span>` +
-        `</a>`;
-      }).join('');
+    async function render() {
+      if (!found && !liveEntry) return;
+      const liveYear = liveEntry ? Number(liveEntry.season) : null;
+      // never mix a live game of a NEW season with finished games of the previous one
+      const mix = !!(liveEntry && found && Number(found.year) === liveYear);
+      const finished = (found && (!liveEntry || mix)) ? found.list.slice().reverse() : []; // newest first
+      const year = liveEntry ? liveYear : found.year;
 
-      heading.textContent = `Last 5 games \u2014 ${found.year} season`;
+      const [names, liveOpp] = await Promise.all([
+        Promise.all(finished.map(r => resolveTeamName(r.oppId))),
+        liveEntry ? resolveTeamName(liveEntry.oppId) : Promise.resolve(null),
+      ]);
+
+      const cards = [];
+      if (liveEntry) cards.push(liveCardHtml(liveEntry, liveOpp));
+      const room = liveEntry ? 4 : 5;
+      for (let i = 0; i < finished.length && i < room; i++) cards.push(finishedCardHtml(finished[i], names[i], year));
+      grid.innerHTML = cards.join('');
+
+      heading.textContent = `Last 5 games \u2014 ${year} season`;
       clearStatus(statusEl2);
       grid.hidden = false;
 
-      // the "Latest game" card above it: newest game of the list (handles its own errors)
-      renderLatestMatchup(manifest, teamId, teamName, found.year, games[0], names[0]);
+      // the pinned block above: the live game if there is one, otherwise the newest finished game
+      if (liveEntry) renderLiveMatchup(teamId, teamName, liveEntry, liveOpp);
+      else if (finished.length > 0) renderLatestMatchup(manifest, teamId, teamName, found.year, finished[0], names[0]);
+    }
+
+    async function tick() {
+      if (busy || document.hidden) return;
+      busy = true;
+      try {
+        const next = liveByTeam(await fetchLiveGames()).get(String(teamId)) || null;
+        const changed = liveSig(next) !== liveSig(liveEntry);
+        if (liveEntry && !next) finishedRetries = 3; // it just ended: pick up the final result
+
+        let refetched = false;
+        if (finishedRetries > 0) {
+          finishedRetries--;
+          const f = await findFinished();
+          if (f) { found = f; refetched = true; }
+        }
+
+        liveEntry = next;
+        if (changed || refetched) await render();
+      } catch (_) { /* a failed refresh keeps what is already on screen */ }
+      finally { busy = false; }
+    }
+
+    try {
+      const [f, liveList] = await Promise.all([
+        findFinished(),
+        fetchLiveGames().catch(() => []),
+      ]);
+      found = f;
+      liveEntry = liveByTeam(liveList).get(String(teamId)) || null;
+
+      if (!found && !liveEntry) {
+        setStatus(statusEl2, 'No completed games found for this team in the archive.');
+      } else {
+        await render();
+      }
     } catch (err) {
       setStatus(statusEl2, `Couldn't load recent games (${err.message}).`, true);
+      return;
     }
+
+    setInterval(tick, LIVE_POLL_MS);
+  }
+
+  // --------------------------------------------------------------------------
+  // Pinned live game (replaces the "Latest game" card while this team is playing).
+  // Same card, with a LIVE strip on top and the current score; no dimmed loser,
+  // no stat lines (the game isn't over). Clicking it opens game.html (live view).
+  // --------------------------------------------------------------------------
+  function setLatestLive(isLive) {
+    const block = document.getElementById('latest-block');
+    const link = document.getElementById('latest-link');
+    if (link) link.classList.toggle('matchup--live', isLive);
+    const h = block && block.querySelector('h1, h2, h3, .block__heading');
+    if (h) {
+      if (h.dataset.liveOrig === undefined) h.dataset.liveOrig = h.textContent;
+      if (/^\s*latest game\s*$/i.test(h.dataset.liveOrig)) h.textContent = isLive ? 'Live now' : h.dataset.liveOrig;
+    }
+  }
+
+  function renderLiveMatchup(teamId, teamName, l, oppName) {
+    try {
+      const block = document.getElementById('latest-block');
+      const link = document.getElementById('latest-link');
+      if (!block || !link) return;
+
+      setLatestLive(true);
+      link.href = `game.html?id=${encodeURIComponent(l.gamePk)}&year=${encodeURIComponent(l.season)}`;
+      link.setAttribute('aria-label',
+        `Live: ${teamName} ${l.us} to ${l.them} ${l.home ? 'vs.' : '@'} ${oppName}, ${l.label} \u2014 open game`);
+      link.innerHTML =
+        `<div class="mu-live"><span class="live-dot" aria-hidden="true"></span>` +
+          `<span class="mu-live__tag">LIVE</span><span class="mu-live__state">${escapeHtml(l.label)}</span></div>` +
+        `<div class="mu-top">` +
+          latestTeamHtml(teamId, teamName) +
+          `<div class="mu-score"><span>${l.us}</span><span class="mu-dash">&ndash;</span><span>${l.them}</span></div>` +
+          latestTeamHtml(l.oppId, oppName) +
+        `</div>` +
+        `<div class="mu-stats" hidden></div>`;
+      block.hidden = false;
+    } catch (_) { /* the matchup card is an extra; never let it break the page */ }
   }
 
   // --------------------------------------------------------------------------
@@ -1220,6 +1474,7 @@ function runTeamPage() {
 
   async function renderLatestMatchup(manifest, teamId, teamName, year, r, oppName) {
     try {
+      setLatestLive(false);
       const block = document.getElementById('latest-block');
       const link = document.getElementById('latest-link');
       if (!block || !link || !r) return;
@@ -3021,8 +3276,20 @@ function runGamePage() {
     }
 
     let manifest, game;
+    let liveFeed = null;
     try {
       manifest = await loadManifest();
+
+      // A current-season game may be in progress (or just finished and not archived yet):
+      // MLB's live feed knows about it. Older seasons skip this and read the archive only.
+      if (!year || Number(year) >= new Date().getFullYear()) {
+        liveFeed = await fetchLiveFeed(gamePk).catch(() => null);
+        if (liveFeed && feedState(liveFeed) === 'live') {
+          await showLive(gamePk, liveFeed);
+          return;
+        }
+      }
+
       if (year) {
         game = await fetchSeasonFile(manifest, year, `games/${gamePk}.json`);
       } else {
@@ -3049,16 +3316,23 @@ function runGamePage() {
       return;
     }
 
+    // Not in the archive (yet): fall back to MLB's feed for a finished game, or say it hasn't started.
+    if (!game && liveFeed) {
+      const st = feedState(liveFeed);
+      if (st === 'final') {
+        game = feedToGame(liveFeed, await fetchWinProb(gamePk));
+      } else if (st === 'preview') {
+        setStatus(statusEl, "This game hasn't started yet. Check back once it's underway.");
+        return;
+      }
+    }
+
     if (!game) {
       setStatus(statusEl, `No game found with id "${gamePk}"${year ? ` in ${year}` : ''}.`, true);
       return;
     }
 
-    renderHeader(game);
-    renderLinescore(game);
-    renderBoxScore(game);
-    renderWinProbability(game);
-    renderPlayByPlay(game);
+    paintGame(game);
 
     clearStatus(statusEl);
     contentEl.hidden = false;
@@ -3075,8 +3349,15 @@ function runGamePage() {
     const awayScore = game.ls ? game.ls.a[0] : '—';
     const homeScore = game.ls ? game.ls.h[0] : '—';
 
-    document.title = `${awayName} @ ${homeName} — MLB Archive`;
-    document.getElementById('game-date').textContent = fmtDate(game.date);
+    document.title = `${game.live ? 'LIVE \u00b7 ' : ''}${awayName} @ ${homeName} — MLB Archive`;
+    const dateEl = document.getElementById('game-date');
+    if (game.live) {
+      dateEl.innerHTML = `${escapeHtml(fmtDate(game.date))} ` +
+        `<span class="live-badge" title="Game in progress"><span class="live-dot" aria-hidden="true"></span>` +
+        `LIVE<span class="live-badge__state">${escapeHtml(game.live.label)}</span></span>`;
+    } else {
+      dateEl.textContent = fmtDate(game.date);
+    }
 
     const matchup = document.getElementById('game-matchup');
     matchup.innerHTML = `
@@ -3098,6 +3379,171 @@ function runGamePage() {
   function cellOrBlank(v) {
     return (v === null || v === undefined) ? '' : v;
   }
+
+  // --------------------------------------------------------------------------
+  // Live games
+  // The archive only has finished games. A game from the current season is
+  // first looked up in MLB's live feed: if it is in progress the page is built
+  // from that feed (same sections as an archived game, plus a LIVE badge) and
+  // refreshed every GAME_POLL_MS until the game ends. A game that just finished
+  // and isn't in the archive yet is built from the same feed, without the badge.
+  // --------------------------------------------------------------------------
+  const GAME_POLL_MS = 20000;
+
+  async function fetchLiveFeed(gamePk) {
+    const res = await fetch(`https://statsapi.mlb.com/api/v1.1/game/${encodeURIComponent(gamePk)}/feed/live`);
+    if (!res.ok) return null;
+    return res.json();
+  }
+
+  async function fetchWinProb(gamePk) {
+    try {
+      const res = await fetch(`https://statsapi.mlb.com/api/v1/game/${encodeURIComponent(gamePk)}/winProbability`);
+      if (!res.ok) return [];
+      const data = await res.json();
+      return Array.isArray(data) ? data : [];
+    } catch (_) { return []; }
+  }
+
+  /** 'live' | 'final' | 'preview' | 'other' (postponed / suspended / cancelled) */
+  function feedState(feed) {
+    const st = (feed && feed.gameData && feed.gameData.status) || {};
+    const d = st.detailedState || '';
+    if (/^(Final|Game Over|Completed Early)/i.test(d)) return 'final';
+    if (/Postponed|Cancelled|Suspended/i.test(d)) return 'other';
+    if (st.abstractGameState === 'Live') return 'live';
+    if (st.abstractGameState === 'Final') return 'final';
+    return 'preview';
+  }
+
+  /** Turns MLB's live feed into the same game object the archive files use, so every render function is shared. */
+  function feedToGame(feed, wpRaw) {
+    const gd = feed.gameData || {};
+    const ld = feed.liveData || {};
+    const ls = ld.linescore || {};
+    const bx = ld.boxscore || {};
+    const teams = gd.teams || {};
+    const state = feedState(feed);
+    const num = (v) => (v === undefined || v === null || v === '') ? null : v;
+
+    const names = {};
+    for (const key of Object.keys(gd.players || {})) {
+      const p = gd.players[key];
+      if (p && p.id !== undefined && p.id !== null) names[p.id] = p.fullName;
+    }
+
+    function teamBox(side) {
+      const t = bx.teams && bx.teams[side];
+      const meta = teams[side] || (t && t.team);
+      if (!t || !meta) return null;
+      const pl = t.players || {};
+      const get = (id) => pl['ID' + id];
+
+      const bat = (t.batters || []).map(get)
+        .filter(p => p && p.person && p.battingOrder !== undefined && p.battingOrder !== null)
+        .sort((a, b) => Number(a.battingOrder) - Number(b.battingOrder))
+        .map(p => {
+          const b = (p.stats && p.stats.batting) || {};
+          return { id: p.person.id, n: p.person.fullName, pos: p.position && p.position.abbreviation,
+            ab: b.atBats, r: b.runs, h: b.hits, d: b.doubles, t: b.triples, hr: b.homeRuns,
+            rbi: b.rbi, bb: b.baseOnBalls, k: b.strikeOuts, sb: b.stolenBases };
+        });
+
+      const tb = (t.teamStats && t.teamStats.batting) || null;
+      const tot = tb ? { ab: tb.atBats, r: tb.runs, h: tb.hits, d: tb.doubles, t: tb.triples, hr: tb.homeRuns,
+        rbi: tb.rbi, bb: tb.baseOnBalls, k: tb.strikeOuts, sb: tb.stolenBases } : null;
+
+      const pit = (t.pitchers || []).map(get)
+        .filter(p => p && p.person)
+        .map(p => {
+          const s = (p.stats && p.stats.pitching) || {};
+          return { id: p.person.id, n: p.person.fullName, ip: s.inningsPitched, h: s.hits, r: s.runs,
+            er: s.earnedRuns, bb: s.baseOnBalls, k: s.strikeOuts, hr: s.homeRuns, note: s.note };
+        });
+
+      return { id: meta.id, name: meta.name, bat, tot, pit };
+    }
+
+    const lsTot = (side) => {
+      const t = (ls.teams && ls.teams[side]) || {};
+      return [num(t.runs) ?? 0, num(t.hits) ?? 0, num(t.errors) ?? 0, num(t.leftOnBase) ?? 0];
+    };
+    const inn = (ls.innings || []).map(i =>
+      [i.away ? num(i.away.runs) : null, null, null, null, i.home ? num(i.home.runs) : null]);
+
+    const plays = ((ld.plays && ld.plays.allPlays) || [])
+      .filter(p => p && p.about && p.result)
+      .map(p => {
+        const evs = p.playEvents || [];
+        const pt = evs.filter(e => e && e.isPitch).map(e => [
+          (e.details && e.details.call && e.details.call.description) || '',
+          (e.details && e.details.type && e.details.type.description) || '',
+          e.pitchData && e.pitchData.startSpeed !== undefined ? e.pitchData.startSpeed : null,
+        ]);
+        const hitEv = evs.find(e => e && e.hitData);
+        const hd = hitEv ? [num(hitEv.hitData.launchSpeed), num(hitEv.hitData.launchAngle),
+          num(hitEv.hitData.totalDistance), num(hitEv.hitData.trajectory)] : null;
+        const top = p.about.isTopInning !== undefined ? !!p.about.isTopInning : p.about.halfInning === 'top';
+        return {
+          t: top ? 0 : 1,
+          in: p.about.inning,
+          bt: p.matchup && p.matchup.batter ? p.matchup.batter.id : null,
+          p: p.matchup && p.matchup.pitcher ? p.matchup.pitcher.id : null,
+          d: p.result.description || (p.about.isComplete === false ? 'At bat in progress' : (p.result.event || '')),
+          ev: p.result.event,
+          sc: !!p.about.isScoringPlay,
+          pt, hd, ac: [],
+        };
+      });
+    if (state === 'live') plays.reverse(); // newest first while the game is going
+
+    const status = gd.status || {};
+    const dt = gd.datetime || {};
+    return {
+      date: dt.dateTime || dt.officialDate || null,
+      live: state === 'live' ? { label: liveStateLabel(status.detailedState, ls) } : null,
+      box: {
+        a: teamBox('away'),
+        h: teamBox('home'),
+        info: (bx.info || []).filter(i => i && i.label && i.value).map(i => [i.label, i.value]),
+        off: (bx.officials || []).filter(o => o && o.official).map(o => [o.officialType, o.official.fullName]),
+      },
+      ls: { a: lsTot('away'), h: lsTot('home'), inn },
+      wp: (Array.isArray(wpRaw) ? wpRaw : [])
+        .map((e, i) => [i, e ? e.homeTeamWinProbability : null])
+        .filter(p => p[1] !== null && p[1] !== undefined),
+      plays,
+      names,
+    };
+  }
+
+  function paintGame(game) {
+    renderHeader(game);
+    renderLinescore(game);
+    renderBoxScore(game);
+    renderWinProbability(game);
+    renderPlayByPlay(game);
+  }
+
+  async function showLive(gamePk, feed) {
+    paintGame(feedToGame(feed, await fetchWinProb(gamePk)));
+    clearStatus(statusEl);
+    contentEl.hidden = false;
+
+    let busy = false;
+    const timer = setInterval(async () => {
+      if (busy || document.hidden) return;
+      busy = true;
+      try {
+        const next = await fetchLiveFeed(gamePk);
+        if (!next) return;
+        paintGame(feedToGame(next, await fetchWinProb(gamePk)));
+        if (feedState(next) !== 'live') clearInterval(timer); // the game ended: this was the final repaint
+      } catch (_) { /* a failed refresh keeps what is already on screen */ }
+      finally { busy = false; }
+    }, GAME_POLL_MS);
+  }
+
 
   function renderLinescore(game) {
     const table = document.getElementById('linescore-table');
