@@ -395,7 +395,7 @@ function divisionFor(teamId, year) {
 // gameType codes that are NOT regular-season games (postseason rounds,
 // spring training, exhibition, all-star, intrasquad). A game with no
 // gameType, or 'R', counts as regular season.
-const NON_REGULAR_GAME_TYPES = new Set(['F', 'D', 'L', 'W', 'S', 'E', 'A', 'P', 'I']);
+const NON_REGULAR_GAME_TYPES = new Set(['S', 'E', 'A', 'I']); // Spring Training, Exhibition, All-Star, Intrasquad — real postseason rounds (F/D/L/W/P/C) count
 
 function escapeHtml(v) {
   return String(v).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
@@ -404,15 +404,21 @@ function escapeHtml(v) {
 
 /**
  * Fallback for seasons that have no schedule.json in the data repos (the
- * current season). Asks MLB's public schedule API for the regular season and
+ * current season). Asks MLB's public schedule API for every game that
+ * season (regular + postseason + exhibition/spring training/all-star) and
  * converts each finished game into the same shape schedule.json uses, so
  * buildLastFive() treats both sources identically. gamePk is the same id the
  * game pages use. Throws on any network / HTTP problem.
  */
 async function fetchScheduleFromStatsApi(year) {
   const fields = 'dates,games,gamePk,gameDate,gameType,status,detailedState,teams,away,home,team,id,score';
+  // No gameType filter: pulls regular season AND postseason (and anything
+  // else scheduled that year). NON_REGULAR_GAME_TYPES below is what actually
+  // decides which of these count as a "real" game for Last 5 / Latest game -
+  // filtering here too would silently hide postseason results once the
+  // regular season ends, which is the bug this fixes.
   const url = `https://statsapi.mlb.com/api/v1/schedule?sportId=1&season=${encodeURIComponent(year)}` +
-    `&gameType=R&fields=${fields}`;
+    `&fields=${fields}`;
   const res = await fetch(url);
   if (!res.ok) throw new Error(`${res.status} fetching MLB schedule for ${year}`);
   const data = await res.json();
