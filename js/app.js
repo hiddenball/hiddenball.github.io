@@ -892,7 +892,6 @@ function runIndexPage() {
     if (!manifest) return;
 
     loadStandings(manifest);
-    loadRecentGames(manifest);
     loadRecentTransactions(manifest);
   }
 
@@ -1008,66 +1007,6 @@ function runIndexPage() {
       } catch (_) { /* a failed refresh keeps what is already on screen */ }
       finally { busy = false; }
     }, LIVE_POLL_MS);
-  }
-
-  // --------------------------------------------------------------------------
-  // Recent games
-  //
-  // KNOWN GAP: the current season (mlb-data-current) has no season-wide
-  // schedule file — only individual per-game files, indexed by gamePk with no
-  // cheap public listing. Until the daily pipeline is extended to also write
-  // a lightweight index, this section shows the most recent PAST season that
-  // has a schedule.json, and says so plainly rather than presenting stale
-  // data as if it were live.
-  // --------------------------------------------------------------------------
-  async function loadRecentGames(manifest) {
-    const statusEl = document.getElementById('games-status');
-    const wrap = document.getElementById('games-wrap');
-    const body = document.getElementById('games-body');
-    const heading = document.getElementById('games-heading');
-    setStatus(statusEl, 'Loading recent games…');
-
-    const thisYear = new Date().getFullYear();
-    const result = await fetchLatestAvailable(manifest, 'schedule.json', { startYear: thisYear }).catch(() => null);
-
-    if (!result || !Array.isArray(result.data)) {
-      setStatus(statusEl, "Couldn't find a game list for any season.", true);
-      return;
-    }
-
-    if (result.year < thisYear) {
-      heading.textContent = `Recent games — ${result.year} season (most recent indexed)`;
-    } else {
-      heading.textContent = `Recent games — ${result.year} season`;
-    }
-
-    const finished = result.data
-      .filter(g => g.status === 'Final' || g.status === 'Completed Early')
-      .sort((a, b) => (a.date < b.date ? 1 : -1))
-      .slice(0, 10);
-
-    if (finished.length === 0) {
-      setStatus(statusEl, `No completed games found in ${result.year}.`, true);
-      return;
-    }
-
-    const resolveTeamName = createTeamNameResolver(manifest);
-    const rows = [];
-    for (const g of finished) {
-      const [awayName, homeName] = await Promise.all([
-        resolveTeamName(g.awayTeamId),
-        resolveTeamName(g.homeTeamId),
-      ]);
-      rows.push(`<tr>
-        <td class="left">${fmtDate(g.date)}</td>
-        <td class="left">${teamLinkHtml(g.awayTeamId, awayName)}</td>
-        <td class="left">${teamLinkHtml(g.homeTeamId, homeName)}</td>
-        <td class="num"><a href="${gameHref(g)}">${g.awayScore}&ndash;${g.homeScore}</a></td>
-      </tr>`);
-    }
-    body.innerHTML = rows.join('');
-    clearStatus(statusEl);
-    wrap.hidden = false;
   }
 
   // --------------------------------------------------------------------------
@@ -4155,7 +4094,7 @@ function runGamePage() {
 
 // ---- dispatcher: run only the one page that's actually loaded ----
 (function dispatch() {
-  if (document.getElementById('games-heading')) { runIndexPage(); return; }
+  if (document.getElementById('standings-heading')) { runIndexPage(); return; }
   if (document.getElementById('team-name')) { runTeamPage(); return; }
   if (document.getElementById('team-grid')) { runTeamsPage(); return; }
   if (document.getElementById('player-name')) { runPlayerPage(); return; }
