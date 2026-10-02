@@ -1159,6 +1159,9 @@ function runTeamPage() {
 
     // not awaited: the rest of the page is already visible while this loads
     loadRecentGames(manifest, id, team.currentName);
+
+    // tabs: Games / Squad / Standings / Trophies
+    initTeamTabs(manifest, id);
   }
 
   function renderTeam(team) {
@@ -1565,6 +1568,351 @@ function runTeamPage() {
 
     clearStatus(statusEl2);
     wrap.hidden = false;
+  }
+
+  // --------------------------------------------------------------------------
+  // Tabs: Games / Squad / Standings / Trophies
+  // One season dropdown (shared by Games, Squad and Standings) picks the year.
+  // Each tab loads on demand and only re-loads when the season changed.
+  // The Trophies tab simply holds the existing #trophy-table.
+  // --------------------------------------------------------------------------
+  const TAB_FIRST_YEAR = 1980;
+  const TAB_LEAGUES = {
+    103: { name: 'American League', abbr: 'AL' },
+    104: { name: 'National League', abbr: 'NL' },
+  };
+  const TAB_ROUNDS = { F: 'Wild Card', D: 'Division Series', L: 'League Championship', W: 'World Series' };
+  const TAB_POS_ORDER = ['P', 'C', '1B', '2B', '3B', 'SS', 'LF', 'CF', 'RF', 'OF', 'IF', 'DH'];
+
+  function tabOrdinal(n) {
+    const s = ['th', 'st', 'nd', 'rd'], v = n % 100;
+    return n + (s[(v - 20) % 10] || s[v] || s[0]);
+  }
+
+  function initTeamTabs(manifest, teamId) {
+    const thisYear = new Date().getFullYear();
+    const byId = (id) => document.getElementById(id);
+    const tabBtns = Array.from(document.querySelectorAll('#tabs-block .tab'));
+    const panels = {
+      games: byId('panel-games'),
+      squad: byId('panel-squad'),
+      standings: byId('panel-standings'),
+      trophies: byId('panel-trophies'),
+    };
+    const seasonBar = byId('season-bar');
+    const select = byId('season-select');
+    if (!select || tabBtns.length === 0) return;
+
+    const resolveName = createTeamNameResolver(manifest);
+    const scheduleCache = new Map();                       // year -> Promise<schedule|null>
+    const loadedYear = { games: null, squad: null, standings: null };
+    const tokens = { games: 0, squad: 0, standings: 0 };   // ignore answers that arrive after a newer request
+    let activeTab = 'games';
+    let season = thisYear;
+
+    let options = '';
+    for (let y = thisYear; y >= TAB_FIRST_YEAR; y--) options += `<option value="${y}">${y}</option>`;
+    select.innerHTML = options;
+
+    function getSchedule(year) {
+      if (!scheduleCache.has(year)) {
+        const p = fetchSeasonSchedule(manifest, year);
+        p.then((r) => { if (!r) scheduleCache.delete(year); }, () => scheduleCache.delete(year));
+        scheduleCache.set(year, p);
+      }
+      return scheduleCache.get(year);
+    }
+
+    /** This team's finished games from a season schedule, newest first (spring training / exhibition / all-star left out). */
+    function teamGames(schedule) {
+      if (!Array.isArray(schedule)) return [];
+      const byPk = new Map();
+      for (const g of schedule) {
+        if (!g || g.gamePk === null || g.gamePk === undefined) continue;
+        if (g.status !== 'Final' && g.status !== 'Completed Early') continue;
+        if (g.gameType && NON_REGULAR_GAME_TYPES.has(g.gameType)) continue;
+        if (String(g.homeTeamId) !== String(teamId) && String(g.awayTeamId) !== String(teamId)) continue;
+        if (g.homeScore === null || g.homeScore === undefined ||
+            g.awayScore === null || g.awayScore === undefined) continue;
+        if (Number.isNaN(Number(g.homeScore)) || Number.isNaN(Number(g.awayScore))) continue;
+        const prev = byPk.get(String(g.gamePk));
+        if (!prev || String(g.date) >= String(prev.date)) byPk.set(String(g.gamePk), g);
+      }
+      return [...byPk.values()].sort((a, b) => {
+        const ta = Date.parse(a.date), tb = Date.parse(b.date);
+        if (!Number.isNaN(ta) && !Number.isNaN(tb) && ta !== tb) return tb - ta;
+        return Number(b.gamePk) - Number(a.gamePk);
+      });
+    }
+
+    /** "Mon, Apr 6, 2026 · 7:05 PM GMT+1" in the viewer's time zone (date only if the data has no time). */
+    function gameWhen(iso) {
+      if (!iso) return '—';
+      const d = new Date(iso);
+      if (Number.isNaN(d.getTime())) return String(iso);
+      const dateOpts = { weekday: 'short', month: 'short', day: 'numeric', year: 'numeric' };
+      if (!/T\d\d:\d\d/.test(String(iso))) return d.toLocaleDateString('en-US', { ...dateOpts, timeZone: 'UTC' });
+      return d.toLocaleDateString('en-US', dateOpts) + ' \u00b7 ' +
+        d.toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit', timeZoneName: 'short' });
+    }
+
+    function gameRowHtml(g, year, names) {
+      const home = String(g.homeTeamId) === String(teamId);
+      const us = Number(home ? g.homeScore : g.awayScore);
+      const them = Number(home ? g.awayScore : g.homeScore);
+      const outcome = us > them ? 'W' : us < them ? 'L' : 'T';
+      const verb = outcome === 'W' ? 'Won' : outcome === 'L' ? 'Lost' : 'Tied';
+      const awayName = names.get(String(g.awayTeamId)) || `Team ${g.awayTeamId}`;
+      const homeName = names.get(String(g.homeTeamId)) || `Team ${g.homeTeamId}`;
+      const label = `${verb} ${us}\u2013${them} ${home ? 'vs.' : '@'} ${home ? awayName : homeName}`;
+      const href = `game.html?id=${encodeURIComponent(g.gamePk)}&year=${encodeURIComponent(year)}`;
+      const round = g.gameType && g.gameType !== 'R' ? (TAB_ROUNDS[g.gameType] || 'Postseason') : '';
+      return `<div class="gm">` +
+        `<div class="gm-when">${escapeHtml(gameWhen(g.date))}` +
+          (round ? `<span class="gm-tag">${escapeHtml(round)}</span>` : '') + `</div>` +
+        `<div class="gm-main">` +
+          `<div class="gm-team gm-team--away${home ? '' : ' is-me'}">${teamLinkHtml(g.awayTeamId, awayName)}</div>` +
+          `<a class="gm-score gm--${outcome.toLowerCase()}" href="${href}" title="${escapeHtml(label)}" aria-label="${escapeHtml(label)}">` +
+            `<span>${g.awayScore}&ndash;${g.homeScore}</span><span class="gm-res">${outcome}</span></a>` +
+          `<div class="gm-team gm-team--home${home ? ' is-me' : ''}">${teamLinkHtml(g.homeTeamId, homeName)}</div>` +
+        `</div></div>`;
+    }
+
+    // ---- Games tab ----------------------------------------------------------
+    async function loadGames() {
+      const my = ++tokens.games, year = season;
+      const status = byId('games-status'), list = byId('games-list');
+      list.innerHTML = '';
+      setStatus(status, `Loading ${year} games\u2026`);
+
+      let games;
+      const names = new Map();
+      try {
+        games = teamGames(await getSchedule(year));
+        const ids = [...new Set(games.flatMap(g => [g.awayTeamId, g.homeTeamId]))];
+        await Promise.all(ids.map(async (id) => { names.set(String(id), await resolveName(id)); }));
+      } catch (err) {
+        if (my !== tokens.games) return;
+        loadedYear.games = null;
+        setStatus(status, `Couldn't load games for ${year} (${err.message}).`, true);
+        return;
+      }
+      if (my !== tokens.games) return;
+
+      if (games.length === 0) {
+        setStatus(status, `No completed games found for this team in ${year}.`);
+        return;
+      }
+      list.innerHTML = `<p class="tab-note">${games.length} games \u00b7 newest first</p>` +
+        `<div class="gm-list">${games.map(g => gameRowHtml(g, year, names)).join('')}</div>`;
+      clearStatus(status);
+    }
+
+    // ---- Squad tab (manager + players) -------------------------------------
+    async function loadSquad() {
+      const my = ++tokens.squad, year = season;
+      const status = byId('squad-status'), body = byId('squad-body');
+      body.innerHTML = '';
+      setStatus(status, `Loading ${year} squad\u2026`);
+
+      let rosters, managers;
+      try {
+        let managerRows;
+        [rosters, managerRows] = await Promise.all([
+          fetchSeasonFile(manifest, year, 'rosters.json'),
+          fetchSeasonFile(manifest, year, 'manager-stats.json').catch(() => null),
+        ]);
+        const seen = new Set();
+        const mine = (Array.isArray(managerRows) ? managerRows : []).filter((r) => {
+          if (!r || String(r.teamId) !== String(teamId) || r.managerId === null || r.managerId === undefined) return false;
+          if (seen.has(String(r.managerId))) return false;
+          seen.add(String(r.managerId));
+          return true;
+        });
+        managers = await Promise.all(mine.map(async (r) => {
+          const rec = await fetchCoreRecord(manifest, 'managers', r.managerId).catch(() => null);
+          return {
+            id: r.managerId,
+            name: rec && rec.fullName ? rec.fullName : `Manager ${r.managerId}`,
+            w: r.wins ?? r.w ?? null,
+            l: r.losses ?? r.l ?? null,
+          };
+        }));
+      } catch (err) {
+        if (my !== tokens.squad) return;
+        loadedYear.squad = null;
+        setStatus(status, `Couldn't load the ${year} squad (${err.message}).`, true);
+        return;
+      }
+      if (my !== tokens.squad) return;
+
+      // rosters.json row shape: [playerId, fullName, jerseyNumber, position, statusCode]
+      const players = rosters && rosters.teams && Array.isArray(rosters.teams[teamId]) ? rosters.teams[teamId].slice() : [];
+      if (players.length === 0 && managers.length === 0) {
+        setStatus(status, `No squad found for this team in ${year}.`);
+        return;
+      }
+
+      const posRank = (p) => { const i = TAB_POS_ORDER.indexOf(p); return i === -1 ? 99 : i; };
+      const jersey = (j) => { const n = parseInt(j, 10); return Number.isNaN(n) ? 999 : n; };
+      players.sort((a, b) =>
+        posRank(a[3]) - posRank(b[3]) || jersey(a[2]) - jersey(b[2]) || String(a[1]).localeCompare(String(b[1])));
+
+      let html = `<h3 class="sub-heading">${managers.length > 1 ? 'Managers' : 'Manager'}</h3>`;
+      if (managers.length) {
+        html += `<ul class="staff-list">` + managers.map((m) => {
+          const rec = m.w !== null && m.l !== null ? `<span class="dim">${escapeHtml(m.w)}\u2013${escapeHtml(m.l)}</span>` : '';
+          return `<li><a class="team-link" href="manager.html?id=${encodeURIComponent(m.id)}">${escapeHtml(m.name)}</a>${rec}</li>`;
+        }).join('') + `</ul>`;
+      } else {
+        html += `<p class="tab-note">No manager listed for ${year}.</p>`;
+      }
+
+      html += `<h3 class="sub-heading">Players (${players.length})</h3>`;
+      if (players.length) {
+        html += `<div class="table-scroll"><table class="ledger"><thead><tr>` +
+          `<th class="left">#</th><th class="left">Player</th><th class="left">Pos</th><th class="left">Status</th>` +
+          `</tr></thead><tbody>` +
+          players.map(([id, name, num, pos, code]) => `<tr>` +
+            `<td class="num">${escapeHtml(num || '\u2014')}</td>` +
+            `<td class="left"><a class="team-link" href="player.html?id=${encodeURIComponent(id)}">${escapeHtml(name || `Player ${id}`)}</a></td>` +
+            `<td class="left">${escapeHtml(pos || '\u2014')}</td>` +
+            `<td class="left">${escapeHtml(code === 'A' ? 'Active' : (code || '\u2014'))}</td>` +
+          `</tr>`).join('') +
+          `</tbody></table></div>`;
+      } else {
+        html += `<p class="tab-note">No player roster found for ${year}.</p>`;
+      }
+      body.innerHTML = html;
+      clearStatus(status);
+    }
+
+    // ---- Standings tab (this team's league, team highlighted) --------------
+    async function loadStandings() {
+      const my = ++tokens.standings, year = season;
+      const status = byId('stand-status'), body = byId('stand-body');
+      body.innerHTML = '';
+      setStatus(status, `Loading ${year} standings\u2026`);
+
+      let data;
+      try {
+        data = await fetchSeasonFile(manifest, year, 'standings-splits.json');
+      } catch (err) {
+        if (my !== tokens.standings) return;
+        loadedYear.standings = null;
+        setStatus(status, `Couldn't load the ${year} standings (${err.message}).`, true);
+        return;
+      }
+      if (my !== tokens.standings) return;
+
+      const rows = data && Array.isArray(data.teams) ? data.teams : null;
+      if (!rows) {
+        setStatus(status, `No standings found for ${year}.`);
+        return;
+      }
+      const me = rows.find(t => String(t.id) === String(teamId));
+      if (!me) {
+        setStatus(status, `This team isn't in the ${year} standings.`);
+        return;
+      }
+
+      const league = TAB_LEAGUES[me.lg] || null;
+      const leagueName = league ? league.name : `League ${me.lg}`;
+      const leagueRows = sortStandingsTeams(rows.filter(t => String(t.lg) === String(me.lg)), STANDINGS_DEFAULT_SORT);
+      const rank = leagueRows.findIndex(t => String(t.id) === String(teamId)) + 1;
+
+      let divText = '';
+      const myDiv = divisionFor(me.id, year);
+      if (myDiv) {
+        const divRank = leagueRows.filter(t => divisionFor(t.id, year) === myDiv)
+          .findIndex(t => String(t.id) === String(teamId)) + 1;
+        if (divRank > 0) divText = ` \u00b7 ${tabOrdinal(divRank)} in the ${league ? league.abbr + ' ' : ''}${myDiv}`;
+      }
+
+      const trs = leagueRows.map((t, i) => {
+        const isMe = String(t.id) === String(teamId);
+        return `<tr${isMe ? ' class="row-me" aria-current="true"' : ''}>` +
+          `<td class="num">${i + 1}</td>` +
+          `<td class="left">${teamLinkHtml(t.id, t.n || `Team ${t.id}`)}</td>` +
+          `<td class="left">${divisionFor(t.id, year) || '\u2014'}</td>` +
+          `<td class="num">${t.w ?? '\u2014'}</td>` +
+          `<td class="num">${t.l ?? '\u2014'}</td>` +
+          `<td class="num">${t.pct ?? '\u2014'}</td>` +
+        `</tr>`;
+      }).join('');
+
+      body.innerHTML =
+        `<p class="tab-note"><strong class="rank-pill">${tabOrdinal(rank)}</strong> of ${leagueRows.length} in the ${escapeHtml(leagueName)}${divText} \u00b7 ${year}</p>` +
+        `<div class="table-scroll"><table class="ledger ledger--standings"><thead><tr>` +
+          `<th class="left">#</th><th class="left">Team</th><th class="left">Div</th>` +
+          `<th title="wins">W</th><th title="losses">L</th><th title="win percentage">Pct</th>` +
+        `</tr></thead><tbody>${trs}</tbody></table></div>`;
+      clearStatus(status);
+    }
+
+    // ---- Tab switching ------------------------------------------------------
+    function ensureLoaded() {
+      if (activeTab === 'trophies' || loadedYear[activeTab] === season) return;
+      loadedYear[activeTab] = season;
+      if (activeTab === 'games') loadGames();
+      else if (activeTab === 'squad') loadSquad();
+      else if (activeTab === 'standings') loadStandings();
+    }
+
+    function showTab(name) {
+      activeTab = name;
+      tabBtns.forEach((b) => {
+        const on = b.dataset.tab === name;
+        b.classList.toggle('is-active', on);
+        b.setAttribute('aria-selected', on ? 'true' : 'false');
+        b.tabIndex = on ? 0 : -1;
+      });
+      for (const [key, el] of Object.entries(panels)) if (el) el.hidden = key !== name;
+      seasonBar.hidden = name === 'trophies';
+      ensureLoaded();
+    }
+
+    /** Newest season (looking back up to 10 years) in which this team actually played. */
+    async function pickDefaultSeason() {
+      const floor = Math.max(TAB_FIRST_YEAR, thisYear - 10);
+      for (let y = thisYear; y >= floor; y--) {
+        try {
+          if (teamGames(await getSchedule(y)).length > 0) return y;
+        } catch (_) { /* try the previous season */ }
+      }
+      return thisYear;
+    }
+
+    tabBtns.forEach((b) => { b.disabled = true; });
+    select.disabled = true;
+    setStatus(byId('games-status'), 'Loading games\u2026');
+
+    (async () => {
+      try {
+        season = await pickDefaultSeason();
+        select.value = String(season);
+      } finally {
+        tabBtns.forEach((b) => { b.disabled = false; });
+        select.disabled = false;
+      }
+
+      tabBtns.forEach((b) => {
+        b.addEventListener('click', () => showTab(b.dataset.tab));
+        b.addEventListener('keydown', (e) => {
+          if (e.key !== 'ArrowRight' && e.key !== 'ArrowLeft') return;
+          const n = tabBtns.length;
+          const next = tabBtns[(tabBtns.indexOf(b) + (e.key === 'ArrowRight' ? 1 : n - 1)) % n];
+          next.focus();
+          showTab(next.dataset.tab);
+          e.preventDefault();
+        });
+      });
+      select.addEventListener('change', () => {
+        season = Number(select.value);
+        ensureLoaded();
+      });
+      showTab('games');
+    })();
   }
 
   main();

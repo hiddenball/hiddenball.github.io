@@ -908,3 +908,123 @@ a.matchup.matchup--live:hover,
   font-weight: 500;
   color: var(--text-secondary);
 }
+
+/* -------------------------------------------------------------------------
+   Team page tabs (Games / Squad / Standings / Trophies)
+   Markup in team.html; rendered by initTeamTabs() in app.js.
+   ------------------------------------------------------------------------- */
+.tabs {
+  display: flex;
+  gap: 4px;
+  margin-bottom: 16px;
+  border-bottom: 1px solid var(--border-strong);
+  overflow-x: auto;
+  -webkit-overflow-scrolling: touch;
+}
+.tab {
+  background: none;
+  border: 0;
+  border-bottom: 2px solid transparent;
+  margin-bottom: -1px;
+  padding: 10px 16px;
+  color: var(--text-tertiary);
+  font-size: 0.92rem;
+  font-weight: 500;
+  white-space: nowrap;
+}
+.tab:hover:not(:disabled) { color: var(--text-primary); }
+.tab.is-active { color: var(--text-primary); border-bottom-color: var(--accent-hover); }
+.tab:disabled { cursor: default; opacity: 0.6; }
+
+.season-bar {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-bottom: 16px;
+  font-size: 0.88rem;
+  color: var(--text-tertiary);
+}
+.season-bar[hidden], .tab-panel[hidden] { display: none; }
+.season-bar select {
+  background: var(--bg-secondary);
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius);
+  color: var(--text-primary);
+  padding: 8px 12px;
+  font-family: var(--font-body);
+  font-size: 0.9rem;
+}
+.season-bar select:disabled { opacity: 0.6; }
+
+.tab-note { font-size: 0.85rem; color: var(--text-tertiary); margin: 0 0 12px; }
+.rank-pill { color: #f0d675; font-weight: 600; }
+
+/* Games list: away | score | home, score green if this team won, red if it lost */
+.gm-list { border: 1px solid var(--border-subtle); border-radius: var(--radius); }
+.gm { padding: 12px 14px; border-bottom: 1px solid var(--border-subtle); }
+.gm:last-child { border-bottom: 0; }
+.gm:hover { background: var(--bg-secondary); }
+.gm-when { text-align: center; font-size: 0.78rem; color: var(--text-tertiary); margin-bottom: 8px; }
+.gm-tag {
+  margin-left: 8px;
+  padding: 1px 7px;
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius);
+  font-size: 0.7rem;
+}
+.gm-main {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto minmax(0, 1fr);
+  align-items: center;
+  gap: 14px;
+}
+.gm-team { min-width: 0; }
+.gm-team--away { justify-self: end; }
+.gm-team--home { justify-self: start; }
+.gm-team.is-me a.team-chip { font-weight: 600; }
+a.gm-score {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 4px;
+  min-width: 84px;
+  font-family: var(--font-display);
+  font-size: 1.35rem;
+  font-weight: 600;
+  line-height: 1;
+  white-space: nowrap;
+  font-variant-numeric: tabular-nums;
+  font-feature-settings: 'tnum' 1;
+  border-bottom: 0;
+}
+.gm-res { font-family: var(--font-body); font-size: 0.68rem; font-weight: 600; letter-spacing: 0.08em; }
+a.gm-score.gm--w { color: #86d9a8; }
+a.gm-score.gm--l { color: #f2949c; }
+a.gm-score.gm--t { color: var(--text-secondary); }
+a.gm-score:hover { text-decoration: underline; }
+
+@media (max-width: 640px), (orientation: portrait) and (max-width: 900px) {
+  .gm-main { gap: 8px; }
+  .gm-team--away, .gm-team--home { justify-self: center; }
+  .gm-team a.team-chip { flex-direction: column; gap: 4px; text-align: center; }
+  a.gm-score { min-width: 64px; font-size: 1.15rem; }
+}
+
+/* Squad */
+.sub-heading {
+  margin: 0 0 8px;
+  font-family: var(--font-body);
+  font-size: 0.78rem;
+  font-weight: 600;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--text-tertiary);
+}
+.staff-list { list-style: none; margin: 0 0 24px; padding: 0; }
+.staff-list li { padding: 10px 0; border-bottom: 1px solid var(--border-subtle); font-size: 0.95rem; }
+.staff-list .dim { margin-left: 10px; color: var(--text-tertiary); }
+
+/* Standings: this team's row in yellow */
+.ledger tbody tr.row-me td { background: rgba(240, 214, 117, 0.16); color: var(--text-primary); font-weight: 600; }
+.ledger tbody tr.row-me td:first-child { box-shadow: inset 3px 0 0 #f0d675; }
+.ledger tbody tr.row-me:hover td { background: rgba(240, 214, 117, 0.22); }

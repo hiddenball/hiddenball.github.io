@@ -45,9 +45,37 @@
       <div class="recent-games" id="recent-games" hidden></div>
     </section>
 
-    <section class="block">
-      <h2 class="block__heading">Titles</h2>
-      <table class="trophy-table" id="trophy-table"></table>
+    <section class="block" id="tabs-block">
+      <div class="tabs" role="tablist" aria-label="Team sections">
+        <button type="button" class="tab is-active" role="tab" id="tab-games" aria-selected="true" aria-controls="panel-games" data-tab="games">Games</button>
+        <button type="button" class="tab" role="tab" id="tab-squad" aria-selected="false" aria-controls="panel-squad" data-tab="squad" tabindex="-1">Squad</button>
+        <button type="button" class="tab" role="tab" id="tab-standings" aria-selected="false" aria-controls="panel-standings" data-tab="standings" tabindex="-1">Standings</button>
+        <button type="button" class="tab" role="tab" id="tab-trophies" aria-selected="false" aria-controls="panel-trophies" data-tab="trophies" tabindex="-1">Trophies</button>
+      </div>
+
+      <div class="season-bar" id="season-bar">
+        <label for="season-select">Season</label>
+        <select id="season-select" aria-label="Season"></select>
+      </div>
+
+      <div class="tab-panel" id="panel-games" role="tabpanel" aria-labelledby="tab-games">
+        <div id="games-status" class="state-msg" hidden style="padding:20px 0;"></div>
+        <div id="games-list"></div>
+      </div>
+
+      <div class="tab-panel" id="panel-squad" role="tabpanel" aria-labelledby="tab-squad" hidden>
+        <div id="squad-status" class="state-msg" hidden style="padding:20px 0;"></div>
+        <div id="squad-body"></div>
+      </div>
+
+      <div class="tab-panel" id="panel-standings" role="tabpanel" aria-labelledby="tab-standings" hidden>
+        <div id="stand-status" class="state-msg" hidden style="padding:20px 0;"></div>
+        <div id="stand-body"></div>
+      </div>
+
+      <div class="tab-panel" id="panel-trophies" role="tabpanel" aria-labelledby="tab-trophies" hidden>
+        <table class="trophy-table" id="trophy-table"></table>
+      </div>
     </section>
 
     <section class="block" id="history-block">
