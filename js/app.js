@@ -185,17 +185,28 @@ function createTeamNameResolver(manifest) {
  * most recent year doesn't always have every file yet (e.g. the current
  * season has no season-wide schedule file — see index.js for the specific
  * case this matters for).
+ *
+ * `validate(data)` - optional; defaults to "any truthy data counts". Pass
+ * one when a file can exist but still be the wrong shape to use (e.g. the
+ * live current-season pipeline writing MLB's raw standings response instead
+ * of our flattened {teams:[...]} shape) - a bad shape is then treated the
+ * same as a missing file, and the walk keeps going to the previous year.
  */
-async function fetchLatestAvailable(manifest, filename, { startYear, floorYear = 1980 } = {}) {
+async function fetchLatestAvailable(manifest, filename, { startYear, floorYear = 1980, validate } = {}) {
   let year = startYear || new Date().getFullYear();
   while (year >= floorYear) {
     try {
       const data = await fetchSeasonFile(manifest, year, filename);
-      if (data) return { year, data };
+      if (data && (!validate || validate(data))) return { year, data };
     } catch (_) { /* try the previous year */ }
     year--;
   }
   return null;
+}
+
+/** Shape guard for standings-splits.json: must have the flattened {teams:[...]} form. */
+function isStandingsShape(data) {
+  return !!data && Array.isArray(data.teams);
 }
 
 // --------------------------------------------------------------------------
@@ -894,7 +905,7 @@ function runIndexPage() {
     const heading = document.getElementById('standings-heading');
     setStatus(statusEl, 'Loading standings…');
 
-    const result = await fetchLatestAvailable(manifest, 'standings-splits.json').catch(() => null);
+    const result = await fetchLatestAvailable(manifest, 'standings-splits.json', { validate: isStandingsShape }).catch(() => null);
     if (!result || !result.data || !Array.isArray(result.data.teams)) {
       setStatus(statusEl, "Couldn't find standings for any season.", true);
       return;
@@ -2717,7 +2728,7 @@ function runStandingsPage() {
         return;
       }
     } else {
-      const result = await fetchLatestAvailable(manifest, 'standings-splits.json').catch(() => null);
+      const result = await fetchLatestAvailable(manifest, 'standings-splits.json', { validate: isStandingsShape }).catch(() => null);
       if (!result) {
         setStatus(statusEl, "Couldn't find standings for any season.", true);
         return;
