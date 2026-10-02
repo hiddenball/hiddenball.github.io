@@ -1980,18 +1980,30 @@ function runPlayerPage() {
     clearStatus(statusEl);
     contentEl.hidden = false;
 
-    loadCareerStats(manifest, id, player);
+    const extrasPromise = loadExtras(id).catch(() => null);
+    const statsPromise = loadCareerStats(manifest, id, player)
+      .catch(() => ({ hitting: [], pitching: [], fielding: [] }));
+    initPlayerTabs(manifest, id, player, statsPromise, extrasPromise);
+
+    // Once both are in: country, team, position, status rows + awards.
+    Promise.all([statsPromise, extrasPromise]).then(async ([rows, api]) => {
+      const extra = await buildExtra(manifest, rows, api);
+      renderBio(player, extra);
+      renderAwards(api);
+    }).catch(() => {});
   }
 
-  function renderBio(p) {
+  function renderBio(p, extra) {
+    const api = extra && extra.api ? extra.api : null;
     document.title = `${p.fullName} — MLB Archive`;
     document.getElementById('crumb-name').textContent = p.fullName;
     document.getElementById('player-name').textContent = p.fullName;
 
     const bats = p.batSide ? `Bats ${p.batSide}` : null;
     const throws = p.pitchHand ? `Throws ${p.pitchHand}` : null;
+    const posName = api && api.primaryPosition && api.primaryPosition.name ? api.primaryPosition.name : null;
     document.getElementById('player-meta-line').textContent =
-      [bats, throws].filter(Boolean).join(' · ') || 'Player';
+      [posName, bats, throws].filter(Boolean).join(' · ') || 'Player';
 
     const badges = document.getElementById('player-badges');
     const chips = [];
@@ -2003,10 +2015,22 @@ function runPlayerPage() {
     }
     badges.innerHTML = chips.join(' ');
 
+    const birthplace = api
+      ? [api.birthCity, api.birthStateProvince].filter(Boolean).join(', ')
+      : '';
+    let statusText = null;
+    if (p.status) statusText = `${p.status[0].toUpperCase()}${p.status.slice(1)}`;
+    else if (api && typeof api.active === 'boolean') statusText = api.active ? 'Active' : 'Retired';
+
     const bio = document.getElementById('bio-table');
     const rows = [
+      ['Country', api && api.birthCountry ? escapeHtml(api.birthCountry) : null],
       ['Born', fmtDate(p.birthDate)],
+      ['Birthplace', birthplace ? escapeHtml(birthplace) : null],
       ['Died', p.deathDate ? fmtDate(p.deathDate) : null],
+      ['Position', posName ? escapeHtml(posName) : null],
+      [extra && extra.teamLabel ? extra.teamLabel : 'Team', extra && extra.teamHtml ? extra.teamHtml : null],
+      ['Status', statusText ? escapeHtml(statusText) : null],
       ['Debut', fmtDate(p.debutDate)],
       ['Last active', fmtOrDash(p.lastActiveSeason)],
       ['Height', fmtOrDash(p.height)],
@@ -2053,7 +2077,7 @@ function runPlayerPage() {
 
     if (hitting.length === 0 && pitching.length === 0 && fielding.length === 0) {
       setStatus(statsStatusEl, 'No season stats found for this player in the archive.', true);
-      return;
+      return { hitting, pitching, fielding };
     }
     clearStatus(statsStatusEl);
 
@@ -2062,6 +2086,7 @@ function runPlayerPage() {
     if (fielding.length) await renderFielding(manifest, fielding);
 
     renderPositionPhoto(fielding);
+    return { hitting, pitching, fielding };
   }
 
   /**
@@ -2198,6 +2223,1082 @@ function runPlayerPage() {
     }
     body.innerHTML = lines.join('');
     document.getElementById('fielding-block').hidden = false;
+  }
+
+  // ==========================================================================
+  // MLB Stats API extras (country, current team, awards) + player tabs
+  // The archive repos hold season stats; birthplace, awards and per-game logs
+  // come from MLB's public Stats API (same host the live-game code already uses).
+  // ==========================================================================
+  const STATSAPI = 'https://statsapi.mlb.com/api/v1';
+  const MONTHS_SHORT = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+
+  async function apiJson(url) {
+    const res = await fetch(url);
+    if (!res.ok) throw new Error(`${res.status} fetching ${url}`);
+    return res.json();
+  }
+
+  /** Person record from the Stats API (null if unavailable). Retries without hydrations if they are rejected. */
+  async function loadExtras(playerId) {
+    const base = `${STATSAPI}/people/${encodeURIComponent(playerId)}`;
+    let data;
+    try {
+      data = await apiJson(`${base}?hydrate=currentTeam,awards`);
+    } catch (_) {
+      data = await apiJson(base);
+    }
+    return data && Array.isArray(data.people) && data.people[0] ? data.people[0] : null;
+  }
+
+  /** Date-only string -> "Apr 1" without timezone shifting. */
+  function fmtShortDate(iso) {
+    const m = /^(\d{4})-(\d{2})-(\d{2})/.exec(String(iso || ''));
+    if (!m) return fmtOrDash(iso);
+    return `${MONTHS_SHORT[Number(m[2]) - 1]} ${Number(m[3])}`;
+  }
+
+  /** [2008, 2009, 2010, 2013] -> "2008–2010, 2013" */
+  function yearRanges(years) {
+    const ys = [...new Set(years)].sort((a, b) => a - b);
+    const out = [];
+    let start = ys[0], prev = ys[0];
+    for (let i = 1; i <= ys.length; i++) {
+      const y = ys[i];
+      if (y === prev + 1) { prev = y; continue; }
+      out.push(start === prev ? `${start}` : `${start}\u2013${prev}`);
+      start = y; prev = y;
+    }
+    return out.join(', ');
+  }
+
+  /** Works out the "Team" bio row: current team if active, else the last team in the archive. */
+  async function buildExtra(manifest, rows, api) {
+    const extra = { api, teamLabel: null, teamHtml: null };
+    const cur = api && api.currentTeam;
+    if (api && api.active && cur && cur.id !== null && cur.id !== undefined && cur.name) {
+      extra.teamLabel = 'Team';
+      extra.teamHtml = teamLinkHtml(cur.id, escapeHtml(cur.name));
+      return extra;
+    }
+    const all = [...(rows.hitting || []), ...(rows.pitching || []), ...(rows.fielding || [])]
+      .filter((r) => r.teamId !== null && r.teamId !== undefined);
+    if (all.length) {
+      const maxYear = Math.max(...all.map((r) => r.year));
+      const last = all.filter((r) => r.year === maxYear).sort((a, b) => b.teamId - a.teamId)[0];
+      const name = await teamName(manifest, last.teamId);
+      extra.teamLabel = 'Last team';
+      extra.teamHtml = teamLinkHtml(last.teamId, escapeHtml(name));
+    }
+    return extra;
+  }
+
+  // ---- Trophies & awards ---------------------------------------------------
+  const AWARD_PRIORITY = /(MVP|Most Valuable|Cy Young|Rookie of the Year|World Series|Hall of Fame|Gold Glove|Silver Slugger|All-Star|Triple Crown|Batting Title|Home Run Leader)/i;
+
+  function renderAwards(api) {
+    const block = document.getElementById('awards-block');
+    const table = document.getElementById('awards-table');
+    const note = document.getElementById('awards-note');
+    table.innerHTML = '';
+    note.hidden = true;
+
+    if (!api || !Array.isArray(api.awards)) {
+      block.hidden = false;
+      note.textContent = 'Awards are unavailable right now.';
+      note.hidden = false;
+      return;
+    }
+    if (api.awards.length === 0) { block.hidden = true; return; }
+
+    const groups = new Map(); // award name -> { count, years:Set }
+    for (const a of api.awards) {
+      const name = a && (a.name || a.id);
+      if (!name) continue;
+      if (!groups.has(name)) groups.set(name, { count: 0, years: new Set() });
+      const g = groups.get(name);
+      g.count++;
+      const y = a.season || (a.date ? String(a.date).slice(0, 4) : '');
+      if (y) g.years.add(String(y));
+    }
+    if (groups.size === 0) { block.hidden = true; return; }
+
+    const entries = [...groups.entries()].sort((a, b) => {
+      const pa = AWARD_PRIORITY.test(a[0]) ? 0 : 1, pb = AWARD_PRIORITY.test(b[0]) ? 0 : 1;
+      return pa - pb || a[0].localeCompare(b[0]);
+    });
+
+    table.innerHTML = entries.map(([name, g]) => {
+      const years = [...g.years].sort();
+      let when = years.join(', ');
+      if (years.length > 12) when = `${years[0]}\u2013${years[years.length - 1]}`;
+      const times = g.count > 1 ? `${g.count}\u00d7` : '';
+      const value = [times, when].filter(Boolean).join(' \u00b7 ');
+      return `<tr><td class="trophy-label">${escapeHtml(name)}</td><td class="trophy-years">${escapeHtml(value || '\u2014')}</td></tr>`;
+    }).join('');
+    block.hidden = false;
+  }
+
+  // ---- Tabs ----------------------------------------------------------------
+  function initPlayerTabs(manifest, playerId, player, statsPromise, extrasPromise) {
+    const btns = Array.from(document.querySelectorAll('#player-tabs .tab'));
+    const panels = {
+      overview: document.getElementById('panel-overview'),
+      games: document.getElementById('panel-games'),
+      career: document.getElementById('panel-career'),
+      heatmap: document.getElementById('panel-heatmap'),
+    };
+    const started = {};
+    let heatmap = null;
+
+    function show(name) {
+      btns.forEach((b) => {
+        const on = b.dataset.tab === name;
+        b.classList.toggle('is-active', on);
+        b.setAttribute('aria-selected', on ? 'true' : 'false');
+        b.tabIndex = on ? 0 : -1;
+      });
+      for (const [key, el] of Object.entries(panels)) if (el) el.hidden = key !== name;
+      if (started[name]) {
+        if (name === 'heatmap' && heatmap) heatmap.redraw(); // the canvas can't be sized while its tab is hidden
+        return;
+      }
+      started[name] = true;
+      if (name === 'games') initGamesTab(manifest, playerId, statsPromise, extrasPromise);
+      else if (name === 'career') renderCareerTab(manifest, player, statsPromise, extrasPromise);
+      else if (name === 'heatmap') heatmap = initHeatmapTab(manifest, playerId, statsPromise, extrasPromise);
+    }
+
+    btns.forEach((b) => {
+      b.addEventListener('click', () => show(b.dataset.tab));
+      b.addEventListener('keydown', (e) => {
+        if (e.key !== 'ArrowRight' && e.key !== 'ArrowLeft') return;
+        const n = btns.length;
+        const next = btns[(btns.indexOf(b) + (e.key === 'ArrowRight' ? 1 : n - 1)) % n];
+        next.focus();
+        show(next.dataset.tab);
+        e.preventDefault();
+      });
+    });
+  }
+
+  // ---- Games tab -----------------------------------------------------------
+  // Team dropdown -> season dropdown (only seasons played for that team) ->
+  // every game that season from MLB's per-player game log.
+  function initGamesTab(manifest, playerId, statsPromise, extrasPromise) {
+    const byId = (x) => document.getElementById(x);
+    const teamSel = byId('games-team');
+    const seasonSel = byId('games-season');
+    const groupSel = byId('games-group');
+    const groupLabel = byId('games-group-label');
+    const status = byId('games-status');
+    const list = byId('games-list');
+
+    const HIT_COLS = [['AB', 'atBats'], ['R', 'runs'], ['H', 'hits'], ['2B', 'doubles'], ['3B', 'triples'],
+      ['HR', 'homeRuns'], ['RBI', 'rbi'], ['BB', 'baseOnBalls'], ['SO', 'strikeOuts'], ['SB', 'stolenBases']];
+    const PIT_COLS = [['IP', 'inningsPitched'], ['H', 'hits'], ['R', 'runs'], ['ER', 'earnedRuns'],
+      ['BB', 'baseOnBalls'], ['SO', 'strikeOuts'], ['HR', 'homeRuns']];
+    const GROUP_NAMES = { hitting: 'Hitting', pitching: 'Pitching' };
+
+    const logCache = new Map(); // "year|group" -> Promise<splits[]>
+    let token = 0;
+    let teams = [];             // [{ id, name, years: Map(year -> Set(groups)) }]
+    let defaultGroup = 'hitting';
+
+    function splitsOf(data) {
+      return data && Array.isArray(data.stats) && data.stats[0] && Array.isArray(data.stats[0].splits)
+        ? data.stats[0].splits : [];
+    }
+
+    function fetchGameLog(year, group) {
+      const key = `${year}|${group}`;
+      if (logCache.has(key)) return logCache.get(key);
+      const p = (async () => {
+        const base = `${STATSAPI}/people/${encodeURIComponent(playerId)}/stats?stats=gameLog&group=${group}&season=${year}`;
+        let regData;
+        try { regData = await apiJson(`${base}&gameType=R`); } catch (_) { regData = await apiJson(base); }
+        const regular = splitsOf(regData);
+        let post = [];
+        try {
+          post = splitsOf(await apiJson(`${base}&gameType=P`)).map((s) => ({ ...s, _post: true }));
+        } catch (_) { /* postseason is a bonus; regular season still shows */ }
+        return regular.concat(post);
+      })();
+      logCache.set(key, p);
+      p.catch(() => logCache.delete(key));
+      return p;
+    }
+
+    const currentTeam = () => teams.find((t) => String(t.id) === teamSel.value);
+
+    function fillTeams() {
+      teamSel.innerHTML = teams.map((t) => {
+        const ys = [...t.years.keys()].sort((a, b) => a - b);
+        const span = ys[0] === ys[ys.length - 1] ? `${ys[0]}` : `${ys[0]}\u2013${ys[ys.length - 1]}`;
+        return `<option value="${escapeHtml(t.id)}">${escapeHtml(t.name)} (${span})</option>`;
+      }).join('');
+    }
+
+    function fillSeasons() {
+      const ys = [...currentTeam().years.keys()].sort((a, b) => b - a);
+      seasonSel.innerHTML = ys.map((y) => `<option value="${y}">${y}</option>`).join('');
+      seasonSel.value = String(ys[0]);
+    }
+
+    function fillGroups() {
+      const set = currentTeam().years.get(Number(seasonSel.value)) || new Set();
+      const avail = ['hitting', 'pitching'].filter((g) => set.has(g));
+      if (avail.length === 0) avail.push('hitting');
+      const prev = groupSel.value;
+      groupSel.innerHTML = avail.map((g) => `<option value="${g}">${GROUP_NAMES[g]}</option>`).join('');
+      groupSel.value = avail.includes(prev) ? prev : (avail.includes(defaultGroup) ? defaultGroup : avail[0]);
+      groupSel.hidden = avail.length < 2;
+      groupLabel.hidden = avail.length < 2;
+    }
+
+    function renderLog(games, group, year) {
+      const isPit = group === 'pitching';
+      const cols = isPit ? PIT_COLS : HIT_COLS;
+      const tot = {};
+      let outs = 0, postCount = 0;
+
+      const body = games.map((s) => {
+        const st = s.stat || {};
+        if (s._post) postCount++;
+        for (const [, k] of cols) {
+          if (k === 'inningsPitched') outs += inningsToOuts(st[k]);
+          else tot[k] = (tot[k] || 0) + (Number(st[k]) || 0);
+        }
+        const gamePk = s.game && s.game.gamePk;
+        const dateTxt = fmtShortDate(s.date);
+        const dateCell = gamePk
+          ? `<a class="team-link" href="${gameHref({ gamePk, season: year })}">${dateTxt}</a>`
+          : dateTxt;
+        const tag = s._post ? ' <span class="gm-tag">Post</span>' : '';
+        const myTeam = s.team || {};
+        const opp = s.opponent || {};
+        const res = s.isWin === true ? '<span class="pg-res pg-res--w">W</span>'
+          : s.isWin === false ? '<span class="pg-res pg-res--l">L</span>' : '\u2014';
+        let dec = '';
+        if (isPit) {
+          const d = st.wins === 1 ? 'W' : st.losses === 1 ? 'L' : st.saves === 1 ? 'SV' : st.holds === 1 ? 'H' : '';
+          dec = `<td class="num">${d || '\u2014'}</td>`;
+        }
+        const cells = cols.map(([, k]) => `<td class="num">${fmtOrDash(st[k])}</td>`).join('');
+        return `<tr>` +
+          `<td class="left">${dateCell}${tag}</td>` +
+          `<td class="left">${teamLinkHtml(myTeam.id, escapeHtml(myTeam.name || 'Team'))}</td>` +
+          `<td class="left">${s.isHome === true ? 'vs' : '@'}</td>` +
+          `<td class="left">${teamLinkHtml(opp.id, escapeHtml(opp.name || 'Opponent'))}</td>` +
+          `<td class="num">${res}</td>${dec}${cells}</tr>`;
+      }).join('');
+
+      const head = `<th class="left">Date</th><th class="left">Team</th><th class="left"></th>` +
+        `<th class="left">Opponent</th><th>Res</th>${isPit ? '<th>Dec</th>' : ''}` +
+        cols.map(([label]) => `<th>${label}</th>`).join('');
+      const foot = `<td class="left" colspan="5">Totals</td>${isPit ? '<td></td>' : ''}` +
+        cols.map(([, k]) => `<td class="num">${k === 'inningsPitched' ? outsToInnings(outs) : (tot[k] || 0)}</td>`).join('');
+
+      let summary;
+      if (isPit) {
+        summary = outs > 0 ? `${fmtNum((tot.earnedRuns || 0) * 27 / outs, 2)} ERA` : '\u2014 ERA';
+      } else {
+        summary = `${tot.atBats ? fmtAvg((tot.hits || 0) / tot.atBats) : '\u2014'} AVG`;
+      }
+      const note = `${games.length} game${games.length === 1 ? '' : 's'}` +
+        `${postCount ? ` (${postCount} postseason)` : ''} \u00b7 ${summary}`;
+
+      return `<p class="tab-note">${note}</p>` +
+        `<div class="table-scroll"><table class="ledger"><thead><tr>${head}</tr></thead>` +
+        `<tbody>${body}</tbody><tfoot><tr>${foot}</tr></tfoot></table></div>`;
+    }
+
+    async function load() {
+      const my = ++token;
+      const year = Number(seasonSel.value), group = groupSel.value, team = currentTeam();
+      list.innerHTML = '';
+      setStatus(status, `Loading ${year} games\u2026`);
+      let splits;
+      try {
+        splits = await fetchGameLog(year, group);
+      } catch (err) {
+        if (my !== token) return;
+        setStatus(status, `Couldn't load games for ${year} (${err.message}).`, true);
+        return;
+      }
+      if (my !== token) return;
+
+      const games = splits
+        .filter((s) => s.team && String(s.team.id) === String(team.id))
+        .sort((a, b) => String(a.date || '').localeCompare(String(b.date || '')));
+      if (games.length === 0) {
+        setStatus(status, `No ${GROUP_NAMES[group].toLowerCase()} games found for ${team.name} in ${year}.`);
+        return;
+      }
+      clearStatus(status);
+      list.innerHTML = renderLog(games, group, year);
+    }
+
+    async function start() {
+      setStatus(status, 'Loading seasons\u2026');
+      const [rows, api] = await Promise.all([statsPromise, extrasPromise]);
+
+      const byTeam = new Map();
+      function add(teamId, year, group) {
+        const key = String(teamId);
+        if (!byTeam.has(key)) byTeam.set(key, { id: key, name: key, years: new Map() });
+        const t = byTeam.get(key);
+        if (!t.years.has(year)) t.years.set(year, new Set());
+        if (group) t.years.get(year).add(group);
+      }
+      for (const g of ['hitting', 'pitching', 'fielding']) {
+        for (const r of rows[g] || []) {
+          if (r.teamId === null || r.teamId === undefined) continue;
+          add(r.teamId, r.year, g === 'fielding' ? null : g);
+        }
+      }
+
+      // The archive stops at 2025; add the current season for active players.
+      const thisYear = new Date().getFullYear();
+      const cur = api && api.currentTeam;
+      const pos = api && api.primaryPosition ? api.primaryPosition.abbreviation : null;
+      const maxYear = Math.max(0, ...[...byTeam.values()].flatMap((t) => [...t.years.keys()]));
+      if (api && api.active && cur && cur.id !== null && cur.id !== undefined && maxYear < thisYear) {
+        if (pos === 'P') add(cur.id, thisYear, 'pitching');
+        else if (pos === 'TWP') { add(cur.id, thisYear, 'hitting'); add(cur.id, thisYear, 'pitching'); }
+        else add(cur.id, thisYear, 'hitting');
+      }
+
+      teams = [...byTeam.values()];
+      if (teams.length === 0) {
+        setStatus(status, 'No seasons found for this player in the archive.', true);
+        teamSel.disabled = seasonSel.disabled = true;
+        return;
+      }
+      await Promise.all(teams.map(async (t) => { t.name = await teamName(manifest, t.id); }));
+      teams.sort((a, b) => Math.max(...b.years.keys()) - Math.max(...a.years.keys()));
+
+      if (pos === 'P') defaultGroup = 'pitching';
+      else if (pos) defaultGroup = 'hitting';
+      else defaultGroup = (rows.pitching || []).length > (rows.hitting || []).length ? 'pitching' : 'hitting';
+
+      fillTeams();
+      teamSel.value = teams[0].id;
+      fillSeasons();
+      fillGroups();
+
+      teamSel.addEventListener('change', () => { fillSeasons(); fillGroups(); load(); });
+      seasonSel.addEventListener('change', () => { fillGroups(); load(); });
+      groupSel.addEventListener('change', load);
+      load();
+    }
+
+    start().catch((err) => {
+      setStatus(status, `Couldn't load games (${err.message}).`, true);
+    });
+  }
+
+  // ---- Career tab ----------------------------------------------------------
+  async function renderCareerTab(manifest, player, statsPromise, extrasPromise) {
+    const status = document.getElementById('career-status');
+    const body = document.getElementById('career-body');
+    setStatus(status, 'Loading career\u2026');
+
+    let rows, api;
+    try {
+      [rows, api] = await Promise.all([statsPromise, extrasPromise]);
+    } catch (err) {
+      setStatus(status, `Couldn't load the career (${err.message}).`, true);
+      return;
+    }
+    const hitting = rows.hitting || [], pitching = rows.pitching || [], fielding = rows.fielding || [];
+    if (hitting.length + pitching.length + fielding.length === 0) {
+      setStatus(status, 'No career data found for this player in the archive.', true);
+      return;
+    }
+    clearStatus(status);
+
+    // teams: years played + games per season
+    const teamMap = new Map();
+    for (const [grp, list] of [['hitting', hitting], ['pitching', pitching], ['fielding', fielding]]) {
+      for (const r of list) {
+        if (r.teamId === null || r.teamId === undefined) continue;
+        const k = String(r.teamId);
+        if (!teamMap.has(k)) teamMap.set(k, { id: r.teamId, years: new Set(), g: new Map() });
+        const t = teamMap.get(k);
+        t.years.add(r.year);
+        const s = r.stat || {};
+        const g = Number(grp === 'fielding' ? s.games : (s.gamesPlayed ?? s.gamesPitched)) || 0;
+        t.g.set(r.year, Math.max(t.g.get(r.year) || 0, g));
+      }
+    }
+    const teamList = [...teamMap.values()].sort((a, b) => Math.min(...a.years) - Math.min(...b.years));
+    const names = await Promise.all(teamList.map((t) => teamName(manifest, t.id)));
+
+    const teamRows = teamList.map((t, i) => {
+      const games = [...t.g.values()].reduce((a, b) => a + b, 0);
+      return `<tr>` +
+        `<td class="left">${teamLinkHtml(t.id, escapeHtml(names[i]))}</td>` +
+        `<td class="left">${yearRanges([...t.years])}</td>` +
+        `<td class="num">${t.years.size}</td>` +
+        `<td class="num">${games ? games.toLocaleString('en-US') : '\u2014'}</td></tr>`;
+    }).join('');
+
+    // career totals (same summing rules as the Overview tables)
+    const seasons = new Set([...hitting, ...pitching, ...fielding].map((r) => r.year));
+    const hit = { g: 0, ab: 0, h: 0, hr: 0, rbi: 0, sb: 0 };
+    for (const r of hitting) {
+      const s = r.stat || {};
+      hit.g += s.gamesPlayed ?? 0; hit.ab += s.atBats ?? 0; hit.h += s.hits ?? 0;
+      hit.hr += s.homeRuns ?? 0; hit.rbi += s.rbi ?? 0; hit.sb += s.stolenBases ?? 0;
+    }
+    const pit = { w: 0, l: 0, er: 0, outs: 0, so: 0 };
+    for (const r of pitching) {
+      const s = r.stat || {};
+      pit.w += s.wins ?? 0; pit.l += s.losses ?? 0; pit.er += s.earnedRuns ?? 0;
+      pit.outs += inningsToOuts(s.inningsPitched); pit.so += s.strikeOuts ?? 0;
+    }
+    const posGames = new Map();
+    for (const r of fielding) {
+      const s = r.stat || {};
+      const ab = s.position && s.position.abbreviation;
+      if (ab) posGames.set(ab, (posGames.get(ab) || 0) + (Number(s.games) || 0));
+    }
+    const positions = [...posGames.entries()].sort((a, b) => b[1] - a[1])
+      .map(([ab, g]) => `${escapeHtml(ab)} (${g.toLocaleString('en-US')} G)`).join(', ');
+
+    const first = Math.min(...seasons), last = Math.max(...seasons);
+    const summary = [
+      ['Seasons', `${seasons.size} (${first === last ? first : `${first}\u2013${last}`})`],
+      ['Teams', String(teamList.length)],
+      ['MLB debut', player.debutDate ? fmtDate(player.debutDate) : null],
+      ['Last active', player.lastActiveSeason ? escapeHtml(player.lastActiveSeason) : null],
+      ['Positions', positions || null],
+      ['Hitting', hit.ab > 0
+        ? `${hit.g.toLocaleString('en-US')} G \u00b7 ${hit.h.toLocaleString('en-US')} H \u00b7 ${hit.hr} HR \u00b7 ${hit.rbi} RBI \u00b7 ${hit.sb} SB \u00b7 ${fmtAvg(hit.h / hit.ab)} AVG`
+        : null],
+      ['Pitching', pit.outs > 0
+        ? `${pit.w || '\u2014'}\u2013${pit.l || '\u2014'} \u00b7 ${fmtNum(pit.er * 27 / pit.outs, 2)} ERA \u00b7 ${outsToInnings(pit.outs)} IP \u00b7 ${pit.so} SO`
+        : null],
+      ['Awards', api && Array.isArray(api.awards) && api.awards.length ? String(api.awards.length) : null],
+      ['Hall of Fame', player.hallOfFame && player.hallOfFame.inducted
+        ? `Inducted${player.hallOfFame.year ? ` ${escapeHtml(player.hallOfFame.year)}` : ''}` : null],
+    ].filter(([, v]) => v !== null);
+
+    body.innerHTML =
+      `<section class="block"><h2 class="block__heading">Career summary</h2>` +
+      `<table class="trophy-table">${summary.map(([label, val]) =>
+        `<tr><td class="trophy-label">${label}</td><td class="trophy-years">${val}</td></tr>`).join('')}</table></section>` +
+      `<section class="block"><h2 class="block__heading">Teams</h2><div class="table-scroll">` +
+      `<table class="ledger"><thead><tr><th class="left">Team</th><th class="left">Years</th><th>Seasons</th><th>G</th></tr></thead>` +
+      `<tbody>${teamRows}</tbody></table></div></section>`;
+  }
+
+  // ==========================================================================
+  // Heat Map tab
+  // Batted-ball locations for one player on a baseball field. Locations come
+  // from MLB's play-by-play feed (hitData.coordinates, Gameday coordinates),
+  // one request per game, so everything is cached (memory + localStorage),
+  // loaded only when the tab is opened, and fetched in small parallel batches.
+  // ==========================================================================
+  const HM_VERSION = 1;
+  // The field is drawn in feet: home plate (0,0), +y toward center field, +x toward right field.
+  const HM_W = 520, HM_H = 460, HM_X0 = -260, HM_Y1 = 430;
+  const HM_FIELDS = 'allPlays,result,eventType,matchup,batter,pitcher,id,batSide,code,' +
+    'playEvents,details,isInPlay,hitData,launchSpeed,launchAngle,totalDistance,coordinates,coordX,coordY';
+  const HM_EVENT_RES = { single: '1B', double: '2B', triple: '3B', home_run: 'HR' };
+  const HM_RES_COLORS = { OUT: '#9aa4b2', '1B': '#4ade80', '2B': '#38bdf8', '3B': '#c084fc', HR: '#facc15' };
+  const HM_RES_NAMES = { OUT: 'Out / error', '1B': 'Single', '2B': 'Double', '3B': 'Triple', HR: 'Home run' };
+  // Plays that can never end on a batted ball (used only if a feed lacks details.isInPlay).
+  const HM_NON_BIP = new Set(['strikeout', 'strikeout_double_play', 'strikeout_triple_play', 'walk', 'intent_walk',
+    'hit_by_pitch', 'catcher_interf', 'batter_interference', 'balk', 'wild_pitch', 'passed_ball', 'pickoff_1b',
+    'pickoff_2b', 'pickoff_3b', 'stolen_base_2b', 'stolen_base_3b', 'caught_stealing_2b', 'caught_stealing_3b']);
+  const HM_EVENT_LABELS = {
+    single: 'Single', double: 'Double', triple: 'Triple', home_run: 'Home run', field_out: 'Field out',
+    force_out: 'Force out', grounded_into_double_play: 'Grounded into DP', double_play: 'Double play',
+    triple_play: 'Triple play', sac_fly: 'Sac fly', sac_fly_double_play: 'Sac fly DP', sac_bunt: 'Sac bunt',
+    sac_bunt_double_play: 'Sac bunt DP', fielders_choice: "Fielder's choice", fielders_choice_out: "Fielder's choice out",
+    field_error: 'Reached on error',
+  };
+  const HM_STOPS = [
+    [0.00, [59, 130, 246, 0]], [0.12, [59, 130, 246, 95]], [0.32, [34, 211, 238, 150]],
+    [0.52, [74, 222, 128, 185]], [0.72, [250, 204, 21, 210]], [0.88, [249, 115, 22, 225]], [1.00, [239, 68, 68, 240]],
+  ];
+  const HM_LUT = (function buildLut() {
+    const lut = new Uint8ClampedArray(256 * 4);
+    for (let i = 0; i < 256; i++) {
+      const t = i / 255;
+      let k = 1;
+      while (k < HM_STOPS.length - 1 && t > HM_STOPS[k][0]) k++;
+      const [t0, c0] = HM_STOPS[k - 1], [t1, c1] = HM_STOPS[k];
+      const f = t1 === t0 ? 0 : Math.min(1, Math.max(0, (t - t0) / (t1 - t0)));
+      for (let c = 0; c < 4; c++) lut[i * 4 + c] = Math.round(c0[c] + (c1[c] - c0[c]) * f);
+    }
+    return lut;
+  })();
+  let hmUseFields = true; // flipped off for good if the API ever rejects the `fields` filter
+
+  const hmNum = (v) => {
+    if (v === null || v === undefined || v === '') return null;
+    const n = Number(v);
+    return Number.isFinite(n) ? n : null;
+  };
+  const hmSleep = (ms) => new Promise((r) => setTimeout(r, ms));
+  const hmSplits = (data) => (data && Array.isArray(data.stats) && data.stats[0] && Array.isArray(data.stats[0].splits)
+    ? data.stats[0].splits : []);
+  const hmPlays = (d) => (d && Array.isArray(d.allPlays) ? d.allPlays
+    : d && d.liveData && d.liveData.plays && Array.isArray(d.liveData.plays.allPlays) ? d.liveData.plays.allPlays : []);
+
+  function hmEventLabel(t) {
+    if (HM_EVENT_LABELS[t]) return HM_EVENT_LABELS[t];
+    return t ? String(t).replace(/_/g, ' ').replace(/^./, (c) => c.toUpperCase()) : 'Batted ball';
+  }
+
+  /** Runs fn over items with at most `limit` in flight; stops picking up new items once cancelled() is true. */
+  async function hmPool(items, limit, fn, cancelled) {
+    let i = 0;
+    const worker = async () => {
+      while (i < items.length) {
+        if (cancelled && cancelled()) return;
+        await fn(items[i++]);
+      }
+    };
+    await Promise.all(Array.from({ length: Math.min(limit, items.length) }, worker));
+  }
+
+  /** Play-by-play for one game (small, field-filtered; retries; falls back to the unfiltered feed). */
+  async function hmFetchPlays(gamePk) {
+    const base = `${STATSAPI}/game/${encodeURIComponent(gamePk)}/playByPlay`;
+    let lastErr;
+    for (let attempt = 0; attempt < 3; attempt++) {
+      try {
+        if (hmUseFields) {
+          const res = await fetch(`${base}?fields=${HM_FIELDS}`);
+          if (res.ok) {
+            const d = await res.json();
+            if (hmPlays(d).length || (d && Array.isArray(d.allPlays))) return d;
+            hmUseFields = false; // unexpected shape from the filter: stop using it
+          } else if (res.status === 404) {
+            const e = new Error('404'); e.noRetry = true; throw e;
+          } else if (res.status === 429 || res.status >= 500) {
+            throw new Error(String(res.status));
+          } else {
+            hmUseFields = false; // 400 etc: the filter itself was refused
+          }
+        }
+        const res2 = await fetch(base);
+        if (res2.status === 404) { const e = new Error('404'); e.noRetry = true; throw e; }
+        if (!res2.ok) throw new Error(String(res2.status));
+        return await res2.json();
+      } catch (e) {
+        lastErr = e;
+        if (e && e.noRetry) break;
+        await hmSleep(500 * (attempt + 1));
+      }
+    }
+    throw lastErr;
+  }
+
+  /** Every game a player appeared in for a season (regular + postseason), oldest first. */
+  async function hmFetchGames(playerId, year, group) {
+    const base = `${STATSAPI}/people/${encodeURIComponent(playerId)}/stats?stats=gameLog&group=${group}&season=${year}`;
+    let reg;
+    try { reg = await apiJson(`${base}&gameType=R`); } catch (_) { reg = await apiJson(base); }
+    let post = null;
+    try { post = await apiJson(`${base}&gameType=P`); } catch (_) { /* postseason is optional */ }
+    const seen = new Set(), out = [];
+    const take = (data, isPost) => {
+      for (const s of hmSplits(data)) {
+        const pk = s.game && s.game.gamePk;
+        if (!pk || seen.has(pk)) continue;
+        seen.add(pk);
+        out.push({ gamePk: pk, date: s.date || '', post: isPost });
+      }
+    };
+    take(reg, false);
+    take(post, true);
+    out.sort((a, b) => String(a.date).localeCompare(String(b.date)));
+    return out;
+  }
+
+  /**
+   * One game's plays -> this player's batted balls. Gameday coordinates are converted to feet
+   * (home plate at 125.42, 198.27 on the 250x250 grid, 2.5 ft per unit). Only the pitch that ended the
+   * plate appearance counts, so foul balls and strikeouts never show up.
+   */
+  function hmExtract(feed, playerId, group, g) {
+    const hits = [];
+    let pa = 0;
+    const pid = String(playerId);
+    for (const play of hmPlays(feed)) {
+      const m = play.matchup || {};
+      const who = group === 'pitching' ? m.pitcher : m.batter;
+      if (!who || String(who.id) !== pid) continue;
+      pa++;
+      const et = play.result && play.result.eventType ? play.result.eventType : '';
+      const evs = Array.isArray(play.playEvents) ? play.playEvents : [];
+      let hd = null;
+      for (let i = evs.length - 1; i >= 0; i--) {
+        const e = evs[i];
+        const co = e && e.hitData && e.hitData.coordinates;
+        if (!co || co.coordX === null || co.coordX === undefined || co.coordY === null || co.coordY === undefined) continue;
+        if ((e.details && e.details.isInPlay === true) || (!e.details && !HM_NON_BIP.has(et))) { hd = e.hitData; break; }
+      }
+      if (!hd) continue;
+      const x = 2.5 * (Number(hd.coordinates.coordX) - 125.42);
+      const y = 2.5 * (198.27 - Number(hd.coordinates.coordY));
+      if (!Number.isFinite(x) || !Number.isFinite(y)) continue;
+      hits.push({
+        x: Math.round(x * 10) / 10, y: Math.round(y * 10) / 10,
+        v: hmNum(hd.launchSpeed), a: hmNum(hd.launchAngle), d: hmNum(hd.totalDistance),
+        r: HM_EVENT_RES[et] || 'OUT', t: et, p: g.post ? 1 : 0,
+        s: m.batSide && m.batSide.code ? m.batSide.code : null, g: g.gamePk, dt: g.date,
+      });
+    }
+    return { hits, pa };
+  }
+
+  /** The ballpark: generic 330 ft lines / 400 ft center field, drawn in feet and flipped so +y is up. */
+  function hmFieldSvg() {
+    const d = 233, b = 63.64, r45 = Math.SQRT1_2;
+    const ring = (r) => `<path d="M${(-r * r45).toFixed(1)} ${(r * r45).toFixed(1)} A${r} ${r} 0 0 0 ${(r * r45).toFixed(1)} ${(r * r45).toFixed(1)}" ` +
+      `fill="none" stroke="rgba(255,255,255,0.13)" stroke-width="1" stroke-dasharray="4 5"/>`;
+    const ringLabel = (r) => `<text x="${(-r * Math.sin(0.62)).toFixed(1)}" y="${(-r * Math.cos(0.62)).toFixed(1)}" ` +
+      `fill="rgba(255,255,255,0.38)" font-size="10" text-anchor="middle">${r} ft</text>`;
+    const base = (x, y) => `<rect x="${x - 3.5}" y="${y - 3.5}" width="7" height="7" fill="#f9f8f4" transform="rotate(45 ${x} ${y})"/>`;
+    return `<svg class="hm-svg" viewBox="${HM_X0} ${-HM_Y1} ${HM_W} ${HM_H}" preserveAspectRatio="xMidYMid meet" aria-hidden="true">` +
+      `<defs><clipPath id="hm-wedge"><path d="M0 0 L-460 460 L460 460 Z"/></clipPath></defs>` +
+      `<g transform="scale(1,-1)">` +
+        `<path d="M0 0 L${-d} ${d} Q0 567 ${d} ${d} Z" fill="#12301f"/>` +
+        `<path d="M${-d} ${d} Q0 567 ${d} ${d}" fill="none" stroke="#6b4f2e" stroke-opacity="0.55" stroke-width="12"/>` +
+        `<g clip-path="url(#hm-wedge)"><circle cx="0" cy="60.5" r="95" fill="#5a4128" fill-opacity="0.6"/></g>` +
+        `<circle cx="0" cy="0" r="13" fill="#5a4128" fill-opacity="0.6"/>` +
+        `<path d="M0 20 L${-44} ${b} L0 ${2 * b - 20} L44 ${b} Z" fill="#17402a"/>` +
+        `<path d="M0 0 L${b} ${b} L0 ${2 * b} L${-b} ${b} Z" fill="none" stroke="rgba(255,255,255,0.45)" stroke-width="1.5"/>` +
+        `<path d="M0 0 L${-d} ${d} M0 0 L${d} ${d}" stroke="rgba(255,255,255,0.6)" stroke-width="1.5"/>` +
+        ring(150) + ring(250) + ring(350) +
+        `<circle cx="0" cy="60.5" r="8" fill="#6b4f2e"/>` +
+        base(b, b) + base(0, 2 * b) + base(-b, b) +
+        `<path d="M-4.5 8 L4.5 8 L4.5 4 L0 0 L-4.5 4 Z" fill="#f9f8f4"/>` +
+      `</g>` +
+      ringLabel(150) + ringLabel(250) + ringLabel(350) +
+    `</svg>`;
+  }
+
+  function initHeatmapTab(manifest, playerId, statsPromise, extrasPromise) {
+    const byId = (x) => document.getElementById(x);
+    const seasonSel = byId('hm-season'), groupSel = byId('hm-group'), groupLabel = byId('hm-group-label');
+    const gamesSel = byId('hm-games'), spreadEl = byId('hm-spread'), spreadWrap = byId('hm-spread-wrap');
+    const status = byId('hm-status'), progress = byId('hm-progress'), bar = byId('hm-progress-bar');
+    const field = byId('hm-field'), side = byId('hm-side');
+    const thisYear = new Date().getFullYear();
+
+    field.innerHTML = hmFieldSvg() + '<canvas class="hm-canvas" id="hm-canvas"></canvas><div class="hm-tip" id="hm-tip" hidden></div>';
+    const canvas = byId('hm-canvas'), tip = byId('hm-tip');
+    const heatCanvas = document.createElement('canvas');
+
+    const state = { all: [], shown: [], view: 'heat', filter: 'all', group: 'hitting', label: '', loading: false, spread: Number(spreadEl.value) || 22 };
+    const yearsBy = { hitting: [], pitching: [] };
+    let token = 0, rafId = 0, hoverIdx = -1;
+
+    // ---- cache (per player / role / season) --------------------------------
+    const cacheKey = (year, group) => `mlb-archive:hm:v${HM_VERSION}:${playerId}:${group}:${year}`;
+    function readCache(year, group) {
+      try {
+        const raw = localStorage.getItem(cacheKey(year, group));
+        if (!raw) return null;
+        const c = JSON.parse(raw);
+        if (!c || !Array.isArray(c.hits)) return null;
+        if (year >= thisYear && Date.now() - c.at > 3 * 3600 * 1000) return null; // current season keeps growing
+        return c;
+      } catch (_) { return null; }
+    }
+    function writeCache(year, group, payload) {
+      try { localStorage.setItem(cacheKey(year, group), JSON.stringify({ at: Date.now(), ...payload })); } catch (_) { /* full or unavailable */ }
+    }
+
+    // ---- data --------------------------------------------------------------
+    async function loadSeason(year, group, my, onProgress) {
+      const cached = readCache(year, group);
+      if (cached) { onProgress(cached.games, cached.games); return cached; }
+
+      const games = await hmFetchGames(playerId, year, group);
+      const out = { hits: [], games: games.length, failed: 0, noData: false };
+      let done = 0, pa = 0;
+      const cancelled = () => my !== token;
+      const doGame = async (g) => {
+        try {
+          const r = hmExtract(await hmFetchPlays(g.gamePk), playerId, group, g);
+          pa += r.pa;
+          for (const h of r.hits) out.hits.push(h);
+        } catch (_) { out.failed++; }
+        done++;
+        if (!cancelled()) onProgress(done, games.length);
+      };
+
+      // Probe a few games first: seasons without tracked locations stop here instead of fetching ~160 empty games.
+      const probe = Math.min(6, games.length);
+      await hmPool(games.slice(0, probe), 6, doGame, cancelled);
+      if (cancelled()) return null;
+      if (games.length > probe && out.failed === 0 && pa >= 15 && out.hits.length === 0) {
+        out.noData = true;
+        writeCache(year, group, out);
+        onProgress(games.length, games.length);
+        return out;
+      }
+      await hmPool(games.slice(probe), 8, doGame, cancelled);
+      if (cancelled()) return null;
+      out.hits.sort((a, b) => String(a.dt).localeCompare(String(b.dt)));
+      if (out.failed === 0) writeCache(year, group, out);
+      return out;
+    }
+
+    async function load() {
+      const my = ++token;
+      const group = groupSel.value, sel = seasonSel.value;
+      const years = sel === 'all' ? yearsBy[group].slice() : [Number(sel)];
+      state.group = group;
+      state.label = sel === 'all' ? 'Career' : `${sel} season`;
+      state.all = [];
+      state.loading = true;
+      hoverIdx = -1; tip.hidden = true;
+      apply();
+      progress.hidden = false;
+      bar.style.width = '0%';
+      clearStatus(status);
+
+      let acc = [], failed = 0, games = 0, empty = 0;
+      try {
+        for (let k = 0; k < years.length; k++) {
+          const y = years[k];
+          setStatus(status, years.length > 1 ? `Loading ${y} (${k + 1} of ${years.length})\u2026` : `Loading ${y} games\u2026`);
+          const res = await loadSeason(y, group, my, (done, total) => {
+            if (my !== token) return;
+            const frac = (k + (total ? done / total : 1)) / years.length;
+            bar.style.width = `${Math.round(frac * 100)}%`;
+            setStatus(status, years.length > 1
+              ? `Loading ${y} (${k + 1} of ${years.length}) \u00b7 ${done}/${total} games\u2026`
+              : `Loading ${y} games\u2026 ${done}/${total}`);
+          });
+          if (my !== token || !res) return;
+          acc = acc.concat(res.hits);
+          failed += res.failed; games += res.games;
+          if (res.noData || (res.games && res.hits.length === 0)) empty++;
+          state.all = acc;
+          apply();
+        }
+      } catch (err) {
+        if (my !== token) return;
+        state.loading = false;
+        progress.hidden = true;
+        setStatus(status, `Couldn't load batted balls (${err.message}). Try again in a moment.`, true);
+        apply();
+        return;
+      }
+      if (my !== token) return;
+      state.loading = false;
+      progress.hidden = true;
+      if (!acc.length) {
+        setStatus(status, games === 0
+          ? `No games found for ${state.label.toLowerCase()}.`
+          : `No batted-ball locations found for the ${state.label.toLowerCase()}. MLB only has hit-location data for more recent seasons.`);
+      } else if (failed > 0) {
+        setStatus(status, `${failed} game${failed === 1 ? '' : 's'} couldn't be loaded, so the map may be slightly incomplete. Switch season and back to retry.`, true);
+      } else if (empty > 0 && years.length > 1) {
+        setStatus(status, `${empty} season${empty === 1 ? '' : 's'} had no location data and ${empty === 1 ? 'is' : 'are'} not included.`);
+      } else {
+        clearStatus(status);
+      }
+      apply();
+    }
+
+    // ---- filtering + stats -------------------------------------------------
+    function apply() {
+      const f = state.filter, g = gamesSel.value;
+      state.shown = state.all.filter((p) => {
+        if (g === 'R' && p.p) return false;
+        if (g === 'P' && !p.p) return false;
+        if (f === 'hit') return p.r !== 'OUT';
+        if (f === 'hr') return p.r === 'HR';
+        if (f === 'out') return p.r === 'OUT';
+        return true;
+      });
+      hoverIdx = -1; tip.hidden = true;
+      renderSide();
+      scheduleDraw();
+    }
+
+    function computeStats(pts, isPit) {
+      const s = { n: pts.length, hits: 0, hr: 0, evN: 0, evSum: 0, evMax: 0, hard: 0, laN: 0, laSum: 0, dN: 0, dSum: 0, z: [0, 0, 0] };
+      for (const p of pts) {
+        if (p.r !== 'OUT') s.hits++;
+        if (p.r === 'HR') s.hr++;
+        if (p.v !== null) { s.evN++; s.evSum += p.v; if (p.v > s.evMax) s.evMax = p.v; if (p.v >= 95) s.hard++; }
+        if (p.a !== null) { s.laN++; s.laSum += p.a; }
+        if (p.d !== null && p.d > 0) { s.dN++; s.dSum += p.d; }
+        const ang = Math.atan2(p.x, p.y) * 180 / Math.PI; // 0 = straight to center, negative = left field
+        if (isPit) {
+          s.z[ang < -15 ? 0 : ang > 15 ? 2 : 1]++;
+        } else {
+          const lefty = p.s === 'L';
+          if (Math.abs(ang) <= 15) s.z[1]++;
+          else if ((ang < 0) !== lefty) s.z[0]++; // pull side
+          else s.z[2]++;                          // opposite field
+        }
+      }
+      return s;
+    }
+
+    function renderSide() {
+      const isPit = state.group === 'pitching';
+      const s = computeStats(state.shown, isPit);
+      const tile = (val, lbl) => `<div class="hm-tile"><div class="hm-tile__val">${val}</div><div class="hm-tile__lbl">${lbl}</div></div>`;
+      const dash = '\u2014';
+      const tiles = [
+        tile(s.n.toLocaleString('en-US'), isPit ? 'Balls in play against' : 'Batted balls'),
+        tile(s.n ? s.hits.toLocaleString('en-US') : dash, isPit ? 'Hits allowed' : 'Hits'),
+        tile(s.n ? s.hr.toLocaleString('en-US') : dash, isPit ? 'HR allowed' : 'Home runs'),
+        tile(s.evN ? `${(s.evSum / s.evN).toFixed(1)}<small> mph</small>` : dash, 'Avg exit velo'),
+        tile(s.evN ? `${s.evMax.toFixed(1)}<small> mph</small>` : dash, 'Max exit velo'),
+        tile(s.evN ? `${Math.round(s.hard * 100 / s.evN)}%` : dash, 'Hard hit (95+ mph)'),
+        tile(s.laN ? `${(s.laSum / s.laN).toFixed(1)}\u00b0` : dash, 'Avg launch angle'),
+        tile(s.dN ? `${Math.round(s.dSum / s.dN)}<small> ft</small>` : dash, 'Avg distance'),
+      ].join('');
+
+      const names = isPit ? ['Left', 'Center', 'Right'] : ['Pull', 'Center', 'Oppo'];
+      const cols = ['#38bdf8', '#a3b1c6', '#fb923c'];
+      const tot = s.z[0] + s.z[1] + s.z[2];
+      const pct = (n) => (tot ? Math.round(n * 100 / tot) : 0);
+      const spray = tot
+        ? `<div class="hm-spray">${s.z.map((n, i) => `<span style="width:${(n * 100 / tot).toFixed(2)}%;background:${cols[i]}"></span>`).join('')}</div>` +
+          `<div class="hm-spray__lbl">${s.z.map((n, i) => `<span><i style="background:${cols[i]}"></i>${names[i]} ${pct(n)}%</span>`).join('')}</div>`
+        : `<p class="hm-note">${dash}</p>`;
+
+      const legend = state.view === 'heat'
+        ? `<div class="hm-grad"></div><div class="hm-grad__lbl"><span>Fewer</span><span>More balls</span></div>`
+        : `<div class="hm-legend">${Object.keys(HM_RES_COLORS).map((k) =>
+            `<span><i style="background:${HM_RES_COLORS[k]}"></i>${HM_RES_NAMES[k]}</span>`).join('')}</div>`;
+
+      const sub = state.loading ? 'Loading\u2026'
+        : state.all.length === state.shown.length ? `${state.all.length.toLocaleString('en-US')} ${isPit ? 'balls in play against' : 'batted balls'}`
+        : `${state.shown.length.toLocaleString('en-US')} of ${state.all.length.toLocaleString('en-US')} shown`;
+
+      side.innerHTML =
+        `<h3 class="hm-side__title">${escapeHtml(state.label || 'Heat map')}</h3><p class="hm-side__sub">${sub}</p>` +
+        `<div class="hm-tiles">${tiles}</div>` +
+        `<h4 class="hm-side__h">${isPit ? 'Where hitters hit it' : 'Spray'}</h4>${spray}` +
+        `<h4 class="hm-side__h">Legend</h4>${legend}` +
+        `<p class="hm-note">Only balls put in play are shown (no foul balls or strikeouts). The field outline is generic: 330 ft lines, 400 ft to center. Real parks differ.</p>`;
+    }
+
+    // ---- drawing -----------------------------------------------------------
+    function metrics() {
+      const cssW = field.clientWidth;
+      if (!cssW) return null;
+      const dpr = Math.min(window.devicePixelRatio || 1, 2);
+      const w = Math.round(cssW * dpr), h = Math.round(cssW * HM_H / HM_W * dpr);
+      if (canvas.width !== w || canvas.height !== h) { canvas.width = w; canvas.height = h; }
+      return { cssW, w, h, k: w / HM_W };
+    }
+
+    function drawHeat(ctx, m, pts) {
+      const CELL = 4, gw = HM_W / CELL, gh = HM_H / CELL;
+      const grid = new Float32Array(gw * gh);
+      const sigma = state.spread / 2;
+      const reach = Math.ceil(sigma * 2.6 / CELL);
+      const inv = 1 / (2 * sigma * sigma);
+      for (const p of pts) {
+        const ci = Math.floor((p.x - HM_X0) / CELL), cj = Math.floor((HM_Y1 - p.y) / CELL);
+        for (let j = Math.max(0, cj - reach); j <= Math.min(gh - 1, cj + reach); j++) {
+          const dy = HM_Y1 - (j + 0.5) * CELL - p.y;
+          for (let i = Math.max(0, ci - reach); i <= Math.min(gw - 1, ci + reach); i++) {
+            const dx = HM_X0 + (i + 0.5) * CELL - p.x;
+            grid[j * gw + i] += Math.exp(-(dx * dx + dy * dy) * inv);
+          }
+        }
+      }
+      let max = 0;
+      for (let i = 0; i < grid.length; i++) if (grid[i] > max) max = grid[i];
+      const denom = Math.max(max, 5); // a handful of balls never shows as "red hot"
+      heatCanvas.width = gw; heatCanvas.height = gh;
+      const hctx = heatCanvas.getContext('2d');
+      const img = hctx.createImageData(gw, gh);
+      for (let i = 0; i < grid.length; i++) {
+        const idx = Math.min(255, Math.floor(Math.pow(grid[i] / denom, 0.8) * 255)) * 4;
+        img.data[i * 4] = HM_LUT[idx]; img.data[i * 4 + 1] = HM_LUT[idx + 1];
+        img.data[i * 4 + 2] = HM_LUT[idx + 2]; img.data[i * 4 + 3] = HM_LUT[idx + 3];
+      }
+      hctx.putImageData(img, 0, 0);
+      ctx.save();
+      ctx.beginPath(); // keep the glow inside the foul lines
+      ctx.moveTo((0 - HM_X0) * m.k, (HM_Y1 + 8) * m.k);
+      ctx.lineTo((-460 - HM_X0) * m.k, (HM_Y1 - 452) * m.k);
+      ctx.lineTo((460 - HM_X0) * m.k, (HM_Y1 - 452) * m.k);
+      ctx.closePath(); ctx.clip();
+      ctx.imageSmoothingEnabled = true;
+      ctx.imageSmoothingQuality = 'high';
+      ctx.drawImage(heatCanvas, 0, 0, gw, gh, 0, 0, m.w, m.h);
+      ctx.restore();
+    }
+
+    function drawDots(ctx, m, pts) {
+      const r = Math.max(2.4 * (m.w / m.cssW), m.w / 190);
+      const order = ['OUT', '1B', '2B', '3B', 'HR'];
+      ctx.lineWidth = Math.max(1, r / 4);
+      ctx.strokeStyle = 'rgba(10,14,20,0.85)';
+      for (const res of order) {
+        ctx.fillStyle = HM_RES_COLORS[res];
+        ctx.globalAlpha = res === 'OUT' ? 0.8 : 0.95;
+        const rr = res === 'HR' ? r * 1.35 : r;
+        for (const p of pts) {
+          if (p.r !== res) continue;
+          ctx.beginPath();
+          ctx.arc((p.x - HM_X0) * m.k, (HM_Y1 - p.y) * m.k, rr, 0, Math.PI * 2);
+          ctx.fill(); ctx.stroke();
+        }
+      }
+      ctx.globalAlpha = 1;
+      if (hoverIdx >= 0 && state.shown[hoverIdx]) {
+        const p = state.shown[hoverIdx];
+        ctx.beginPath();
+        ctx.arc((p.x - HM_X0) * m.k, (HM_Y1 - p.y) * m.k, r * 2, 0, Math.PI * 2);
+        ctx.strokeStyle = '#f9f8f4'; ctx.lineWidth = Math.max(1.5, r / 3); ctx.stroke();
+      }
+    }
+
+    function draw() {
+      rafId = 0;
+      const m = metrics();
+      if (!m) return;
+      const ctx = canvas.getContext('2d');
+      ctx.clearRect(0, 0, m.w, m.h);
+      if (!state.shown.length) return;
+      if (state.view === 'heat') drawHeat(ctx, m, state.shown);
+      else drawDots(ctx, m, state.shown);
+    }
+    function scheduleDraw() {
+      if (rafId) return;
+      rafId = typeof requestAnimationFrame === 'function' ? requestAnimationFrame(draw) : (draw(), 0);
+    }
+
+    // ---- hover / click on dots ----------------------------------------------
+    function nearest(ev) {
+      const rect = canvas.getBoundingClientRect();
+      const k = rect.width / HM_W;
+      if (!k) return null;
+      const fx = (ev.clientX - rect.left) / k + HM_X0, fy = HM_Y1 - (ev.clientY - rect.top) / k;
+      const maxD = 10 / k; // ~10 screen px, in feet
+      let best = -1, bd = maxD * maxD;
+      for (let i = 0; i < state.shown.length; i++) {
+        const p = state.shown[i];
+        const d = (p.x - fx) * (p.x - fx) + (p.y - fy) * (p.y - fy);
+        if (d <= bd) { bd = d; best = i; }
+      }
+      return { idx: best, rect };
+    }
+    canvas.addEventListener('pointermove', (ev) => {
+      if (state.view !== 'dots') return;
+      const hit = nearest(ev);
+      if (!hit) return;
+      if (hit.idx === hoverIdx) return;
+      hoverIdx = hit.idx;
+      canvas.style.cursor = hoverIdx >= 0 ? 'pointer' : 'default';
+      if (hoverIdx < 0) tip.hidden = true;
+      else {
+        const p = state.shown[hoverIdx];
+        const bits = [p.v !== null ? `${p.v.toFixed(1)} mph` : null, p.a !== null ? `${p.a.toFixed(0)}\u00b0` : null,
+          p.d !== null && p.d > 0 ? `${Math.round(p.d)} ft` : null].filter(Boolean).join(' \u00b7 ');
+        tip.innerHTML = `<strong>${escapeHtml(hmEventLabel(p.t))}</strong>${p.p ? ' <span class="gm-tag">Post</span>' : ''}<br>` +
+          `${escapeHtml(fmtDate(p.dt))}${bits ? `<br>${bits}` : ''}`;
+        tip.hidden = false;
+        const fw = field.clientWidth;
+        const left = ev.clientX - hit.rect.left + 14, top = ev.clientY - hit.rect.top + 14;
+        tip.style.left = `${Math.max(4, Math.min(left, fw - tip.offsetWidth - 4))}px`;
+        tip.style.top = `${Math.max(4, top)}px`;
+      }
+      scheduleDraw();
+    });
+    canvas.addEventListener('pointerleave', () => {
+      if (hoverIdx !== -1) { hoverIdx = -1; tip.hidden = true; scheduleDraw(); }
+    });
+    canvas.addEventListener('click', (ev) => {
+      if (state.view !== 'dots') return;
+      const hit = nearest(ev);
+      const p = hit && hit.idx >= 0 ? state.shown[hit.idx] : null;
+      if (p && p.g) window.location.href = gameHref({ gamePk: p.g, date: p.dt });
+    });
+
+    // ---- controls ----------------------------------------------------------
+    function bindSeg(id, onPick) {
+      const el = byId(id);
+      const btns = Array.from(el.querySelectorAll('.hm-seg__btn'));
+      btns.forEach((b) => b.addEventListener('click', () => {
+        btns.forEach((x) => { const on = x === b; x.classList.toggle('is-active', on); x.setAttribute('aria-pressed', on ? 'true' : 'false'); });
+        onPick(b.dataset.v);
+      }));
+    }
+    bindSeg('hm-view', (v) => {
+      state.view = v;
+      spreadWrap.hidden = v !== 'heat';
+      hoverIdx = -1; tip.hidden = true;
+      canvas.style.cursor = 'default';
+      renderSide();
+      scheduleDraw();
+    });
+    bindSeg('hm-filter', (v) => { state.filter = v; apply(); });
+    spreadEl.addEventListener('input', () => { state.spread = Number(spreadEl.value) || 22; scheduleDraw(); });
+    gamesSel.addEventListener('change', apply);
+    window.addEventListener('resize', scheduleDraw);
+    if (typeof ResizeObserver === 'function') new ResizeObserver(() => scheduleDraw()).observe(field);
+
+    // ---- start-up: which seasons / roles exist for this player ---------------
+    async function start() {
+      setStatus(status, 'Loading seasons\u2026');
+      const [rows, api] = await Promise.all([statsPromise, extrasPromise]);
+      const sets = { hitting: new Set(), pitching: new Set() };
+      for (const g of ['hitting', 'pitching']) for (const r of rows[g] || []) sets[g].add(r.year);
+
+      // The archive stops before the current season, so active players get it added.
+      const cur = api && api.currentTeam;
+      const pos = api && api.primaryPosition ? api.primaryPosition.abbreviation : null;
+      const maxYear = Math.max(0, ...sets.hitting, ...sets.pitching);
+      if (api && api.active && cur && cur.id !== null && cur.id !== undefined && maxYear < thisYear) {
+        if (pos === 'P') sets.pitching.add(thisYear);
+        else if (pos === 'TWP') { sets.hitting.add(thisYear); sets.pitching.add(thisYear); }
+        else sets.hitting.add(thisYear);
+      }
+      yearsBy.hitting = [...sets.hitting].sort((a, b) => b - a);
+      yearsBy.pitching = [...sets.pitching].sort((a, b) => b - a);
+
+      const groups = ['hitting', 'pitching'].filter((g) => yearsBy[g].length);
+      if (!groups.length) {
+        setStatus(status, 'No seasons found for this player in the archive.', true);
+        seasonSel.disabled = true; gamesSel.disabled = true;
+        renderSide();
+        return;
+      }
+      const def = pos === 'P' && groups.includes('pitching') ? 'pitching' : groups.includes('hitting') ? 'hitting' : groups[0];
+      groupSel.innerHTML = groups.map((g) => `<option value="${g}">${g === 'hitting' ? 'Batting' : 'Pitching'}</option>`).join('');
+      groupSel.value = def;
+      groupSel.hidden = groups.length < 2;
+      groupLabel.hidden = groups.length < 2;
+
+      function fillSeasons() {
+        const ys = yearsBy[groupSel.value];
+        seasonSel.innerHTML = ys.map((y) => `<option value="${y}">${y}</option>`).join('') +
+          (ys.length > 1 ? '<option value="all">All seasons</option>' : '');
+        seasonSel.value = String(ys[0]);
+      }
+      fillSeasons();
+      groupSel.addEventListener('change', () => { fillSeasons(); load(); });
+      seasonSel.addEventListener('change', load);
+      load();
+    }
+
+    start().catch((err) => setStatus(status, `Couldn't start the heat map (${err.message}).`, true));
+    renderSide();
+
+    return { redraw: scheduleDraw };
   }
 
   main();
