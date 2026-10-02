@@ -32,55 +32,128 @@
       <div class="hero__meta" id="player-badges"></div>
     </div>
 
-    <section class="block" id="bio-block">
-      <h2 class="block__heading">Bio</h2>
-      <table class="trophy-table" id="bio-table"></table>
-    </section>
+    <div class="tabs" id="player-tabs" role="tablist">
+      <button class="tab is-active" role="tab" data-tab="overview" aria-selected="true">Overview</button>
+      <button class="tab" role="tab" data-tab="games" aria-selected="false" tabindex="-1">Games</button>
+      <button class="tab" role="tab" data-tab="career" aria-selected="false" tabindex="-1">Career</button>
+      <button class="tab" role="tab" data-tab="heatmap" aria-selected="false" tabindex="-1">Heat Map</button>
+    </div>
 
-    <div id="stats-status" class="state-msg" hidden></div>
+    <!-- ===== Overview ===== -->
+    <div class="tab-panel" id="panel-overview">
+      <section class="block" id="bio-block">
+        <h2 class="block__heading">Bio</h2>
+        <table class="trophy-table" id="bio-table"></table>
+      </section>
 
-    <section class="block" id="hitting-block" hidden>
-      <h2 class="block__heading">Hitting</h2>
-      <div class="table-scroll">
-        <table class="ledger" id="hitting-table">
-          <thead><tr>
-            <th class="left">Year</th><th class="left">Team</th>
-            <th>G</th><th>AB</th><th>R</th><th>H</th><th>2B</th><th>3B</th><th>HR</th>
-            <th>RBI</th><th>BB</th><th>SO</th><th>SB</th><th>AVG</th>
-          </tr></thead>
-          <tbody id="hitting-body"></tbody>
-          <tfoot id="hitting-foot"></tfoot>
-        </table>
+      <section class="block" id="awards-block" hidden>
+        <h2 class="block__heading">Trophies &amp; Awards</h2>
+        <p class="tab-note" id="awards-note" hidden></p>
+        <table class="trophy-table" id="awards-table"></table>
+      </section>
+
+      <div id="stats-status" class="state-msg" hidden></div>
+
+      <section class="block" id="hitting-block" hidden>
+        <h2 class="block__heading">Hitting</h2>
+        <div class="table-scroll">
+          <table class="ledger" id="hitting-table">
+            <thead><tr>
+              <th class="left">Year</th><th class="left">Team</th>
+              <th>G</th><th>AB</th><th>R</th><th>H</th><th>2B</th><th>3B</th><th>HR</th>
+              <th>RBI</th><th>BB</th><th>SO</th><th>SB</th><th>AVG</th>
+            </tr></thead>
+            <tbody id="hitting-body"></tbody>
+            <tfoot id="hitting-foot"></tfoot>
+          </table>
+        </div>
+      </section>
+
+      <section class="block" id="pitching-block" hidden>
+        <h2 class="block__heading">Pitching</h2>
+        <div class="table-scroll">
+          <table class="ledger" id="pitching-table">
+            <thead><tr>
+              <th class="left">Year</th><th class="left">Team</th>
+              <th>W</th><th>L</th><th>ERA</th><th>IP</th><th>H</th><th>R</th><th>ER</th>
+              <th>BB</th><th>SO</th><th>HR</th>
+            </tr></thead>
+            <tbody id="pitching-body"></tbody>
+            <tfoot id="pitching-foot"></tfoot>
+          </table>
+        </div>
+      </section>
+
+      <section class="block" id="fielding-block" hidden>
+        <h2 class="block__heading">Fielding</h2>
+        <div class="table-scroll">
+          <table class="ledger" id="fielding-table">
+            <thead><tr>
+              <th class="left">Year</th><th class="left">Team</th><th class="left">Pos</th>
+              <th>G</th><th>GS</th><th>Inn</th><th>PO/A</th><th>E</th><th>FLD%</th>
+            </tr></thead>
+            <tbody id="fielding-body"></tbody>
+          </table>
+        </div>
+      </section>
+    </div>
+
+    <!-- ===== Games ===== -->
+    <div class="tab-panel" id="panel-games" hidden>
+      <div class="season-bar season-bar--wrap" id="games-bar">
+        <label for="games-team">Team</label>
+        <select id="games-team"></select>
+        <label for="games-season">Season</label>
+        <select id="games-season"></select>
+        <label for="games-group" id="games-group-label" hidden>Stats</label>
+        <select id="games-group" hidden></select>
       </div>
-    </section>
+      <div id="games-status" class="state-msg" hidden></div>
+      <div id="games-list"></div>
+    </div>
 
-    <section class="block" id="pitching-block" hidden>
-      <h2 class="block__heading">Pitching</h2>
-      <div class="table-scroll">
-        <table class="ledger" id="pitching-table">
-          <thead><tr>
-            <th class="left">Year</th><th class="left">Team</th>
-            <th>W</th><th>L</th><th>ERA</th><th>IP</th><th>H</th><th>R</th><th>ER</th>
-            <th>BB</th><th>SO</th><th>HR</th>
-          </tr></thead>
-          <tbody id="pitching-body"></tbody>
-          <tfoot id="pitching-foot"></tfoot>
-        </table>
-      </div>
-    </section>
+    <!-- ===== Career ===== -->
+    <div class="tab-panel" id="panel-career" hidden>
+      <div id="career-status" class="state-msg" hidden></div>
+      <div id="career-body"></div>
+    </div>
 
-    <section class="block" id="fielding-block" hidden>
-      <h2 class="block__heading">Fielding</h2>
-      <div class="table-scroll">
-        <table class="ledger" id="fielding-table">
-          <thead><tr>
-            <th class="left">Year</th><th class="left">Team</th><th class="left">Pos</th>
-            <th>G</th><th>GS</th><th>Inn</th><th>PO/A</th><th>E</th><th>FLD%</th>
-          </tr></thead>
-          <tbody id="fielding-body"></tbody>
-        </table>
+    <!-- ===== Heat Map ===== -->
+    <div class="tab-panel" id="panel-heatmap" hidden>
+      <div class="season-bar season-bar--wrap" id="hm-bar">
+        <label for="hm-season">Season</label>
+        <select id="hm-season"></select>
+        <label for="hm-group" id="hm-group-label" hidden>Role</label>
+        <select id="hm-group" hidden></select>
+        <label for="hm-games">Games</label>
+        <select id="hm-games">
+          <option value="all">All games</option>
+          <option value="R">Regular season</option>
+          <option value="P">Postseason</option>
+        </select>
       </div>
-    </section>
+      <div class="hm-controls">
+        <div class="hm-seg" id="hm-view" role="group" aria-label="View">
+          <button class="hm-seg__btn is-active" data-v="heat" aria-pressed="true">Heat map</button>
+          <button class="hm-seg__btn" data-v="dots" aria-pressed="false">Dots</button>
+        </div>
+        <div class="hm-seg" id="hm-filter" role="group" aria-label="Outcome">
+          <button class="hm-seg__btn is-active" data-v="all" aria-pressed="true">All</button>
+          <button class="hm-seg__btn" data-v="hit" aria-pressed="false">Hits</button>
+          <button class="hm-seg__btn" data-v="hr" aria-pressed="false">HR</button>
+          <button class="hm-seg__btn" data-v="out" aria-pressed="false">Outs</button>
+        </div>
+        <label class="hm-spread" id="hm-spread-wrap">Spread
+          <input type="range" id="hm-spread" min="12" max="40" step="1" value="22">
+        </label>
+      </div>
+      <div id="hm-status" class="state-msg" hidden></div>
+      <div class="hm-progress" id="hm-progress" hidden><div class="hm-progress__bar" id="hm-progress-bar"></div></div>
+      <div class="hm-layout">
+        <div class="hm-field" id="hm-field"></div>
+        <aside class="hm-side" id="hm-side"></aside>
+      </div>
+    </div>
   </div>
 </main>
 
