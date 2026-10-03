@@ -1,0 +1,44 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>National League — MLB Archive</title>
+<link rel="stylesheet" href="css/style.css">
+</head>
+<body data-league="104">
+
+<header class="site-header">
+  <div class="site-header__inner">
+    <div class="site-title"><a href="index.html">MLB Archive</a></div>
+    <nav class="site-nav">
+      <a href="teams.html">Teams</a>
+      <a href="players.html">Players</a>
+      <a href="scores.html">Scores</a>
+    </nav>
+  </div>
+</header>
+
+<main>
+  <div class="breadcrumb"><a href="index.html">Standings</a> / National League</div>
+
+  <div class="hero" style="border-bottom: 2px solid var(--accent);">
+    <div class="hero__eyebrow">National League</div>
+    <h1 class="hero__title">All 15 teams, one table.</h1>
+    <div class="hero__meta">
+      <a class="accent-link" href="index.html">Back to Majors</a>
+      <span class="dim">·</span>
+      <a class="accent-link" href="AL.html">American League</a>
+    </div>
+  </div>
+
+  <section class="block">
+    <h2 class="block__heading" id="league-heading">Standings</h2>
+    <div id="league-status" class="state-msg" hidden></div>
+    <div id="league-wrap" hidden></div>
+  </section>
+</main>
+
+<script type="module" src="js/app.js"></script>
+</body>
+</html>
