@@ -194,16 +194,20 @@ function createTeamNameResolver(manifest) {
  * case this matters for).
  *
  * `validate(data)` - optional; defaults to "any truthy data counts". Pass
- * one when a file can exist but still be the wrong shape to use (e.g. the
- * live current-season pipeline writing MLB's raw standings response instead
- * of our flattened {teams:[...]} shape) - a bad shape is then treated the
- * same as a missing file, and the walk keeps going to the previous year.
+ * one when a file can exist but still be the wrong shape to use - a bad shape
+ * is then treated the same as a missing file, and the walk keeps going to
+ * the previous year.
+ * `transform(data)` - optional; runs on the fetched data (if any) BEFORE
+ * validate, so a file that's readable but in a different raw shape can be
+ * converted into the shape callers expect (e.g. normalizeStandings below)
+ * instead of being rejected outright.
  */
-async function fetchLatestAvailable(manifest, filename, { startYear, floorYear = 1980, validate } = {}) {
+async function fetchLatestAvailable(manifest, filename, { startYear, floorYear = 1980, validate, transform } = {}) {
   let year = startYear || new Date().getFullYear();
   while (year >= floorYear) {
     try {
-      const data = await fetchSeasonFile(manifest, year, filename);
+      let data = await fetchSeasonFile(manifest, year, filename);
+      if (transform) data = transform(data);
       if (data && (!validate || validate(data))) return { year, data };
     } catch (_) { /* try the previous year */ }
     year--;
@@ -214,6 +218,52 @@ async function fetchLatestAvailable(manifest, filename, { startYear, floorYear =
 /** Shape guard for standings-splits.json: must have the flattened {teams:[...]} form. */
 function isStandingsShape(data) {
   return !!data && Array.isArray(data.teams);
+}
+
+/**
+ * standings-splits.json comes in two shapes depending on where it was
+ * written: the batch/historical pipeline writes the flattened
+ * {v, year, teams:[{id,n,lg,w,l,pct,gb,...}]} shape every page already reads;
+ * the LIVE current-season pipeline (mlb-data-current) instead writes MLB's
+ * raw Stats API standings response untouched - {copyright, records:[{league,
+ * teamRecords:[{team,wins,losses,winningPercentage,gamesBack,...}]}]} - which
+ * has no top-level "teams" array at all. Without this, the current season's
+ * real standings can never be shown: every reader here checks for
+ * Array.isArray(data.teams), so the raw shape looks "unusable" and callers
+ * silently fall back to last season's (already-correct) data instead.
+ * This converts the raw shape into the same {teams:[...]} shape used
+ * everywhere else, so the current season's live standings actually render.
+ * Already-flattened data (or a shape matching neither) passes through
+ * unchanged (null stays null, so callers' existing "no data" handling still
+ * applies).
+ */
+function normalizeStandings(data) {
+  if (isStandingsShape(data)) return data;
+  if (!data || !Array.isArray(data.records)) return data;
+
+  const teams = [];
+  for (const rec of data.records) {
+    const lg = rec.league && rec.league.id;
+    for (const tr of rec.teamRecords || []) {
+      const team = tr.team || {};
+      if (team.id === null || team.id === undefined) continue;
+      const lr = tr.leagueRecord || {};
+      teams.push({
+        id: team.id,
+        n: team.name || `Team ${team.id}`,
+        ab: team.abbreviation ?? null,
+        lg,
+        w: tr.wins ?? lr.wins ?? null,
+        l: tr.losses ?? lr.losses ?? null,
+        pct: tr.winningPercentage ?? lr.pct ?? null,
+        gb: tr.gamesBack ?? null,
+        wcgb: tr.wildCardGamesBack ?? null,
+        gp: tr.gamesPlayed ?? null,
+        rd: tr.runDifferential ?? null,
+      });
+    }
+  }
+  return teams.length ? { teams } : null;
 }
 
 // --------------------------------------------------------------------------
@@ -1056,7 +1106,7 @@ function runIndexPage() {
     const heading = document.getElementById('standings-heading');
     setStatus(statusEl, 'Loading standings…');
 
-    const result = await fetchLatestAvailable(manifest, 'standings-splits.json', { validate: isStandingsShape }).catch(() => null);
+    const result = await fetchLatestAvailable(manifest, 'standings-splits.json', { transform: normalizeStandings, validate: isStandingsShape }).catch(() => null);
     if (!result || !result.data || !Array.isArray(result.data.teams)) {
       setStatus(statusEl, "Couldn't find standings for any season.", true);
       return;
@@ -1908,7 +1958,7 @@ function runTeamPage() {
 
       let data;
       try {
-        data = await fetchSeasonFile(manifest, year, 'standings-splits.json');
+        data = normalizeStandings(await fetchSeasonFile(manifest, year, 'standings-splits.json'));
       } catch (err) {
         if (my !== tokens.standings) return;
         loadedYear.standings = null;
@@ -3916,7 +3966,7 @@ function runStandingsPage() {
     if (requestedYear) {
       year = parseInt(requestedYear, 10);
       try {
-        data = await fetchSeasonFile(manifest, year, 'standings-splits.json');
+        data = normalizeStandings(await fetchSeasonFile(manifest, year, 'standings-splits.json'));
       } catch (err) {
         setStatus(statusEl, `Couldn't load standings for ${year} (${err.message}).`, true);
         return;
@@ -3930,7 +3980,7 @@ function runStandingsPage() {
         return;
       }
     } else {
-      const result = await fetchLatestAvailable(manifest, 'standings-splits.json', { validate: isStandingsShape }).catch(() => null);
+      const result = await fetchLatestAvailable(manifest, 'standings-splits.json', { transform: normalizeStandings, validate: isStandingsShape }).catch(() => null);
       if (!result) {
         setStatus(statusEl, "Couldn't find standings for any season.", true);
         return;
@@ -4033,7 +4083,7 @@ function runLeaguePage() {
     const heading = document.getElementById('league-heading');
     setStatus(statusEl, 'Loading standings…');
 
-    const result = await fetchLatestAvailable(manifest, 'standings-splits.json', { validate: isStandingsShape }).catch(() => null);
+    const result = await fetchLatestAvailable(manifest, 'standings-splits.json', { transform: normalizeStandings, validate: isStandingsShape }).catch(() => null);
     if (!result || !result.data || !Array.isArray(result.data.teams)) {
       setStatus(statusEl, "Couldn't find standings for any season.", true);
       return;
