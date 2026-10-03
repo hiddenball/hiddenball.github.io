@@ -982,7 +982,10 @@ a.matchup.matchup--live:hover,
 .gm-team--away { justify-self: end; }
 .gm-team--home { justify-self: start; }
 .gm-team.is-me a.team-chip { font-weight: 600; }
-a.gm-score {
+/* .gm-score is also used (as a plain <span>, not a link) for a scheduled game
+   that hasn't started yet - today's-games box on index.html - so the base box
+   layout applies to both; :hover underline and the W/L/T colours stay link-only. */
+.gm-score {
   display: flex;
   flex-direction: column;
   align-items: center;
@@ -1001,7 +1004,9 @@ a.gm-score {
 a.gm-score.gm--w { color: #86d9a8; }
 a.gm-score.gm--l { color: #f2949c; }
 a.gm-score.gm--t { color: var(--text-secondary); }
+a.gm-score.gm--live { color: #ff8a95; }
 a.gm-score:hover { text-decoration: underline; }
+.gm-score--pending { color: var(--text-tertiary); font-weight: 400; }
 
 @media (max-width: 640px), (orientation: portrait) and (max-width: 900px) {
   .gm-main { gap: 8px; }
@@ -1115,3 +1120,32 @@ a.gm-score:hover { text-decoration: underline; }
   .hm-layout { grid-template-columns: minmax(0, 1fr); }
   .hm-spread input { width: 100px; }
 }
+
+/* -------------------------------------------------------------------------
+   Today's games (index.html, pinned above Standings)
+   Reuses team.html's .gm-list/.gm row layout (away | score-or-time | home).
+   Given a slightly raised, accent-edged card so it reads as "pinned" rather
+   than just another section. Rendered by loadTodaysGames() in app.js.
+   ------------------------------------------------------------------------- */
+.block--pinned {
+  padding: 18px 20px 20px;
+  background: var(--bg-secondary);
+  border: 1px solid var(--border-subtle);
+  border-left: 3px solid var(--accent-hover);
+  border-radius: var(--radius);
+}
+.block--pinned .block__heading { border-bottom-color: var(--border-strong); }
+.gm-when .live-dot { vertical-align: middle; margin-right: 2px; }
+
+/* -------------------------------------------------------------------------
+   Clickable league heading (index.html standings -> AL.html / NL.html)
+   Rendered by loadStandings() in app.js.
+   ------------------------------------------------------------------------- */
+.league-heading a.league-heading-link {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  color: inherit;
+  border-bottom: 1px solid transparent;
+}
+.league-heading a.league-heading-link:hover { color: var(--accent-hover); }
