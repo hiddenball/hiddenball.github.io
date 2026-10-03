@@ -4953,7 +4953,63 @@ function runGamePage() {
 
   const statusEl = document.getElementById('status');
   const contentEl = document.getElementById('content');
+  const byId = (id) => document.getElementById(id);
+  const esc = escapeHtml;
 
+  const GAME_POLL_MS = 20000;
+  const TAB_KEYS = ['summary', 'box', 'stats', 'plays', 'winprob'];
+
+  // UI state that has to survive the live repaints (tab, team toggle, play filters, opened pitch lists).
+  const ui = { tab: 'summary', boxSide: 'a', playFilter: 'all', playInning: 'all', playOrder: null, openPlays: new Set() };
+  let current = null;   // the game object on screen
+  let view = null;      // its derived view (see buildView)
+  let tabsReady = false;
+
+  // --------------------------------------------------------------------------
+  // Small helpers
+  // --------------------------------------------------------------------------
+  const numOrNull = (v) => {
+    if (v === null || v === undefined || v === '') return null;
+    const n = Number(v);
+    return Number.isFinite(n) ? n : null;
+  };
+  const n0 = (v) => { const n = numOrNull(v); return n === null ? 0 : n; };
+  const cellOrBlank = (v) => (v === null || v === undefined ? '' : v);
+  const ordinal = (n) => {
+    const s = ['th', 'st', 'nd', 'rd'], r = n % 100;
+    return n + (s[(r - 20) % 10] || s[r] || s[0]);
+  };
+  const prettyKey = (s) => String(s || '').replace(/_/g, ' ').replace(/^./, (c) => c.toUpperCase());
+  const halfLabel = (t, inning) => {
+    const n = numOrNull(inning);
+    return `${t === 0 ? 'Top' : 'Bottom'} ${n === null ? '' : ordinal(n)}`.trim();
+  };
+  const section = (title, body) =>
+    `<section class="block"><h2 class="block__heading">${title}</h2>${body}</section>`;
+  const emptyMsg = (text) => `<p class="state-msg" style="padding:20px 0;">${esc(text)}</p>`;
+  const playerLink = (id, name) => (id === null || id === undefined || id === ''
+    ? esc(name)
+    : `<a class="team-link" href="player.html?id=${encodeURIComponent(id)}">${esc(name)}</a>`);
+
+  function ipToOuts(ip) {
+    if (ip === null || ip === undefined || ip === '') return 0;
+    const [whole, frac = '0'] = String(ip).split('.');
+    return (parseInt(whole, 10) || 0) * 3 + (parseInt(frac, 10) || 0);
+  }
+  function outsToIp(outs) { return `${Math.floor(outs / 3)}.${outs % 3}`; }
+
+  /** Runs a render step; one broken section never blanks the whole page. */
+  function safe(label, fn) {
+    try { fn(); } catch (err) {
+      console.error(`Game page: ${label} failed`, err);
+      const el = byId(label);
+      if (el) el.innerHTML = emptyMsg("Couldn't display this section.");
+    }
+  }
+
+  // --------------------------------------------------------------------------
+  // Loading
+  // --------------------------------------------------------------------------
   async function main() {
     const gamePk = qs('id');
     let year = qs('year');
@@ -5012,6 +5068,9 @@ function runGamePage() {
       } else if (st === 'preview') {
         setStatus(statusEl, "This game hasn't started yet. Check back once it's underway.");
         return;
+      } else if (st === 'other') {
+        setStatus(statusEl, 'This game was postponed, suspended or cancelled.');
+        return;
       }
     }
 
@@ -5027,57 +5086,13 @@ function runGamePage() {
   }
 
   // --------------------------------------------------------------------------
-  // Header
-  // --------------------------------------------------------------------------
-  function renderHeader(game) {
-    const away = game.box && game.box.a;
-    const home = game.box && game.box.h;
-    const awayName = away ? away.name : 'Away';
-    const homeName = home ? home.name : 'Home';
-    const awayScore = game.ls ? game.ls.a[0] : '—';
-    const homeScore = game.ls ? game.ls.h[0] : '—';
-
-    document.title = `${game.live ? 'LIVE \u00b7 ' : ''}${awayName} @ ${homeName} — MLB Archive`;
-    const dateEl = document.getElementById('game-date');
-    if (game.live) {
-      dateEl.innerHTML = `${escapeHtml(fmtDate(game.date))} ` +
-        `<span class="live-badge" title="Game in progress"><span class="live-dot" aria-hidden="true"></span>` +
-        `LIVE<span class="live-badge__state">${escapeHtml(game.live.label)}</span></span>`;
-    } else {
-      dateEl.textContent = fmtDate(game.date);
-    }
-
-    const matchup = document.getElementById('game-matchup');
-    matchup.innerHTML = `
-      <span style="display:inline-flex;align-items:center;gap:10px;">
-        <img class="team-logo-sm" id="hdr-logo-away" alt="" style="width:36px;height:36px;">
-        <a href="team.html?id=${away ? away.id : ''}" style="color:inherit;">${awayName}</a>
-        <span style="color:var(--text-tertiary);font-weight:400;">${awayScore} &ndash; ${homeScore}</span>
-        <a href="team.html?id=${home ? home.id : ''}" style="color:inherit;">${homeName}</a>
-        <img class="team-logo-sm" id="hdr-logo-home" alt="" style="width:36px;height:36px;">
-      </span>`;
-
-    if (away) setImgWithFallback(document.getElementById('hdr-logo-away'), `assets/logos/${away.id}.webp`);
-    if (home) setImgWithFallback(document.getElementById('hdr-logo-home'), `assets/logos/${home.id}.webp`);
-  }
-
-  // --------------------------------------------------------------------------
-  // Linescore
-  // --------------------------------------------------------------------------
-  function cellOrBlank(v) {
-    return (v === null || v === undefined) ? '' : v;
-  }
-
-  // --------------------------------------------------------------------------
   // Live games
   // The archive only has finished games. A game from the current season is
   // first looked up in MLB's live feed: if it is in progress the page is built
-  // from that feed (same sections as an archived game, plus a LIVE badge) and
+  // from that feed (same sections as an archived game, plus LIVE markers) and
   // refreshed every GAME_POLL_MS until the game ends. A game that just finished
   // and isn't in the archive yet is built from the same feed, without the badge.
   // --------------------------------------------------------------------------
-  const GAME_POLL_MS = 20000;
-
   async function fetchLiveFeed(gamePk) {
     const res = await fetch(`https://statsapi.mlb.com/api/v1.1/game/${encodeURIComponent(gamePk)}/feed/live`);
     if (!res.ok) return null;
@@ -5149,7 +5164,16 @@ function runGamePage() {
             er: s.earnedRuns, bb: s.baseOnBalls, k: s.strikeOuts, hr: s.homeRuns, note: s.note };
         });
 
-      return { id: meta.id, name: meta.name, bat, tot, pit };
+      // team-level notes (2B / HR / SB / errors ...), same { title: [[label, text], ...] } shape the archive uses
+      const notes = {};
+      for (const sec of (t.info || [])) {
+        if (!sec || !sec.title || !Array.isArray(sec.fieldList)) continue;
+        const rows = sec.fieldList.filter(f => f && f.label)
+          .map(f => [f.label, String(f.value === undefined || f.value === null ? '' : f.value).replace(/\.\s*$/, '')]);
+        if (rows.length) notes[sec.title] = rows;
+      }
+
+      return { id: meta.id, name: meta.name, bat, tot, pit, notes };
     }
 
     const lsTot = (side) => {
@@ -5159,6 +5183,7 @@ function runGamePage() {
     const inn = (ls.innings || []).map(i =>
       [i.away ? num(i.away.runs) : null, null, null, null, i.home ? num(i.home.runs) : null]);
 
+    // oldest -> newest (the Plays tab decides which way to show them)
     const plays = ((ld.plays && ld.plays.allPlays) || [])
       .filter(p => p && p.about && p.result)
       .map(p => {
@@ -5168,6 +5193,8 @@ function runGamePage() {
           (e.details && e.details.type && e.details.type.description) || '',
           e.pitchData && e.pitchData.startSpeed !== undefined ? e.pitchData.startSpeed : null,
         ]);
+        const ac = evs.filter(e => e && e.type === 'action' && e.details && e.details.description)
+          .map(e => e.details.description);
         const hitEv = evs.find(e => e && e.hitData);
         const hd = hitEv ? [num(hitEv.hitData.launchSpeed), num(hitEv.hitData.launchAngle),
           num(hitEv.hitData.totalDistance), num(hitEv.hitData.trajectory)] : null;
@@ -5180,10 +5207,9 @@ function runGamePage() {
           d: p.result.description || (p.about.isComplete === false ? 'At bat in progress' : (p.result.event || '')),
           ev: p.result.event,
           sc: !!p.about.isScoringPlay,
-          pt, hd, ac: [],
+          pt, hd, ac,
         };
       });
-    if (state === 'live') plays.reverse(); // newest first while the game is going
 
     const status = gd.status || {};
     const dt = gd.datetime || {};
@@ -5205,16 +5231,23 @@ function runGamePage() {
     };
   }
 
-  function paintGame(game) {
-    renderHeader(game);
-    renderLinescore(game);
-    renderBoxScore(game);
-    renderWinProbability(game);
-    renderPlayByPlay(game);
+  /** Cheap fingerprint of what is on screen, so a poll only repaints when something changed. */
+  function sigOf(g) {
+    const plays = Array.isArray(g.plays) ? g.plays : [];
+    const last = plays.length ? plays[plays.length - 1] : null;
+    return [
+      g.live ? g.live.label : 'final',
+      g.ls ? JSON.stringify([g.ls.a, g.ls.h]) : '',
+      plays.length,
+      last ? `${last.d || ''}|${Array.isArray(last.pt) ? last.pt.length : 0}` : '',
+      (g.wp || []).length,
+    ].join('#');
   }
 
   async function showLive(gamePk, feed) {
-    paintGame(feedToGame(feed, await fetchWinProb(gamePk)));
+    const first = feedToGame(feed, await fetchWinProb(gamePk));
+    paintGame(first);
+    let lastSig = sigOf(first);
     clearStatus(statusEl);
     contentEl.hidden = false;
 
@@ -5225,47 +5258,376 @@ function runGamePage() {
       try {
         const next = await fetchLiveFeed(gamePk);
         if (!next) return;
-        paintGame(feedToGame(next, await fetchWinProb(gamePk)));
-        if (feedState(next) !== 'live') clearInterval(timer); // the game ended: this was the final repaint
+        const state = feedState(next);
+        const g = feedToGame(next, await fetchWinProb(gamePk));
+        const sig = sigOf(g);
+        if (sig !== lastSig) { paintGame(g); lastSig = sig; }
+        if (state !== 'live') clearInterval(timer); // the game ended: that was the final repaint
       } catch (_) { /* a failed refresh keeps what is already on screen */ }
       finally { busy = false; }
     }, GAME_POLL_MS);
   }
 
+  // --------------------------------------------------------------------------
+  // View model: everything the renderers need, worked out once per paint
+  // --------------------------------------------------------------------------
+  function buildView(game) {
+    const box = game.box || {};
+    const mkTeam = (side, fallback) => {
+      const t = box[side] || null;
+      const name = t && t.name ? String(t.name) : fallback;
+      return { side, id: t && t.id !== undefined ? t.id : null, name, nick: shortTeamName(name), data: t };
+    };
+    const away = mkTeam('a', 'Away');
+    const home = mkTeam('h', 'Home');
 
-  function renderLinescore(game) {
-    const table = document.getElementById('linescore-table');
-    if (!game.ls) { table.innerHTML = ''; return; }
+    const ls = game.ls || null;
+    const inn = ls && Array.isArray(ls.inn) ? ls.inn : [];
+    const lsTot = (side) => (ls && Array.isArray(ls[side]) ? ls[side] : []);
+    const runsOf = (side) => {
+      const r = numOrNull(lsTot(side)[0]);
+      if (r !== null) return r;
+      const t = box[side] && box[side].tot;
+      return t ? numOrNull(t.r) : null;
+    };
+    const runs = { a: runsOf('a'), h: runsOf('h') };
 
-    const away = game.box && game.box.a;
-    const home = game.box && game.box.h;
-    const innings = game.ls.inn || [];
+    const live = !!game.live;
+    let winner = null;
+    if (!live && runs.a !== null && runs.h !== null && runs.a !== runs.h) winner = runs.a > runs.h ? 'a' : 'h';
 
-    let head = `<thead><tr><th class="left">Team</th>`;
-    for (let i = 0; i < innings.length; i++) head += `<th>${i + 1}</th>`;
-    head += `<th>R</th><th>H</th><th>E</th><th>LOB</th></tr></thead>`;
-
-    function row(teamName, teamId, idx, totals, logoId) {
-      let cells = `<td class="left"><img class="team-logo-sm" id="${logoId}" alt="">
-        <a class="team-link" href="team.html?id=${teamId || ''}">${teamName}</a></td>`;
-      for (const inn of innings) cells += `<td class="num">${cellOrBlank(inn[idx])}</td>`;
-      for (const t of totals) cells += `<td class="num">${cellOrBlank(t)}</td>`;
-      return `<tr>${cells}</tr>`;
+    // game-wide facts (venue, weather, attendance ...)
+    const info = new Map();
+    for (const row of (Array.isArray(box.info) ? box.info : [])) {
+      if (!Array.isArray(row)) continue;
+      const [label, value] = row;
+      if (label && value) info.set(String(label).trim(), String(value).replace(/\.\s*$/, '').trim());
     }
 
-    const body = `<tbody>
-      ${row(away ? away.name : 'Away', away ? away.id : null, 0, game.ls.a || [], 'ls-logo-away')}
-      ${row(home ? home.name : 'Home', home ? home.id : null, 4, game.ls.h || [], 'ls-logo-home')}
-    </tbody>`;
+    // `i` is the play's position in the feed: the win-probability list lines up with it
+    const plays = (Array.isArray(game.plays) ? game.plays : []).map((p, i) => ({ ...p, i }));
 
-    table.innerHTML = head + body;
+    return {
+      away, home, runs, live, winner, inn, innings: inn.length, lsTot, info, plays,
+      names: game.names || {},
+      officials: (Array.isArray(box.off) ? box.off : []).filter(Array.isArray),
+    };
+  }
 
-    if (away) setImgWithFallback(document.getElementById('ls-logo-away'), `assets/logos/${away.id}.webp`);
-    if (home) setImgWithFallback(document.getElementById('ls-logo-home'), `assets/logos/${home.id}.webp`);
+  /** Score after a half-inning (half 0 = top, 1 = bottom), from the linescore. */
+  function scoreAfter(v, inning, half) {
+    let a = 0, h = 0;
+    for (let i = 0; i < v.inn.length && i < inning; i++) {
+      const row = v.inn[i] || [];
+      a += n0(row[0]);
+      if (i < inning - 1 || half === 1) h += n0(row[4]);
+    }
+    return [a, h];
   }
 
   // --------------------------------------------------------------------------
-  // Box score
+  // Paint everything
+  // --------------------------------------------------------------------------
+  function paintGame(game) {
+    const v = buildView(game);
+    current = game;
+    view = v;
+    initTabs();
+    safe('hero', () => renderHero(game, v));
+    safe('g-summary', () => { byId('g-summary').innerHTML = renderSummary(game, v); });
+    safe('g-box', renderBox);
+    safe('g-stats', () => { byId('g-stats').innerHTML = renderStats(v); });
+    safe('g-plays', renderPlays);
+    safe('g-winprob', renderWinProb);
+  }
+
+  function initTabs() {
+    if (tabsReady) return;
+    tabsReady = true;
+
+    const btns = Array.from(document.querySelectorAll('#game-tabs .tab'));
+    function show(name) {
+      ui.tab = name;
+      btns.forEach((b) => {
+        const on = b.dataset.tab === name;
+        b.classList.toggle('is-active', on);
+        b.setAttribute('aria-selected', on ? 'true' : 'false');
+        b.tabIndex = on ? 0 : -1;
+      });
+      TAB_KEYS.forEach((k) => { const el = byId('gpanel-' + k); if (el) el.hidden = k !== name; });
+    }
+    btns.forEach((b) => {
+      b.addEventListener('click', () => show(b.dataset.tab));
+      b.addEventListener('keydown', (e) => {
+        if (e.key !== 'ArrowRight' && e.key !== 'ArrowLeft') return;
+        const n = btns.length;
+        const next = btns[(btns.indexOf(b) + (e.key === 'ArrowRight' ? 1 : n - 1)) % n];
+        next.focus();
+        show(next.dataset.tab);
+        e.preventDefault();
+      });
+    });
+    const want = qs('tab');
+    show(TAB_KEYS.includes(want) ? want : 'summary');
+
+    // Box score: team toggle
+    byId('g-box').addEventListener('click', (e) => {
+      const b = e.target.closest('[data-side]');
+      if (!b || !view) return;
+      ui.boxSide = b.dataset.side === 'h' ? 'h' : 'a';
+      safe('g-box', renderBox);
+    });
+
+    // Plays: filter / order buttons, inning select, remembering opened pitch lists
+    const playsRoot = byId('g-plays');
+    playsRoot.addEventListener('click', (e) => {
+      if (!view) return;
+      const f = e.target.closest('[data-filter]');
+      if (f) { ui.playFilter = f.dataset.filter; safe('g-plays', renderPlays); return; }
+      const o = e.target.closest('[data-order]');
+      if (o) { ui.playOrder = o.dataset.order === 'new' ? 'new' : 'old'; safe('g-plays', renderPlays); }
+    });
+    playsRoot.addEventListener('change', (e) => {
+      const s = e.target.closest('[data-inning]');
+      if (!s || !view) return;
+      ui.playInning = s.value;
+      safe('g-plays', renderPlays);
+    });
+    playsRoot.addEventListener('toggle', (e) => {
+      const d = e.target;
+      if (!d || !d.dataset || d.dataset.i === undefined) return;
+      const i = Number(d.dataset.i);
+      if (d.open) ui.openPlays.add(i); else ui.openPlays.delete(i);
+    }, true); // 'toggle' doesn't bubble, so listen while it travels down
+  }
+
+  // --------------------------------------------------------------------------
+  // Hero: logo cards with nicknames, score between them
+  //   winner's score green, loser's score white at 50%; both red while live
+  // --------------------------------------------------------------------------
+  function heroTeamHtml(team) {
+    const img = team.id === null || team.id === undefined ? '' :
+      `<img src="assets/logos/${encodeURIComponent(team.id)}.webp" alt="" ` +
+      `onerror="this.onerror=null;this.style.display='none';">`;
+    const inner = `<span class="mu-logo">${img}</span><span class="mu-name">${esc(team.nick)}</span>`;
+    return team.id === null || team.id === undefined
+      ? `<div class="mu-team">${inner}</div>`
+      : `<a class="mu-team" href="team.html?id=${encodeURIComponent(team.id)}">${inner}</a>`;
+  }
+
+  function renderHero(game, v) {
+    document.title = `${v.live ? 'LIVE \u00b7 ' : ''}${v.away.nick} @ ${v.home.nick} \u2014 MLB Archive`;
+    byId('game-date').textContent = fmtDate(game.date);
+
+    const shown = (n) => (n === null ? '\u2014' : String(n));
+    const cls = (side) => (v.live ? 'is-live' : (v.winner ? (v.winner === side ? 'is-win' : 'is-dim') : ''));
+
+    const state = v.live
+      ? `<span class="live-badge" title="Game in progress"><span class="live-dot" aria-hidden="true"></span>LIVE` +
+        `<span class="live-badge__state">${esc(game.live.label)}</span></span>`
+      : `<span class="gh-final">${v.innings > 9 ? `Final/${v.innings}` : 'Final'}</span>`;
+
+    byId('game-title').textContent =
+      `${v.away.nick} ${shown(v.runs.a)}, ${v.home.nick} ${shown(v.runs.h)} (${v.live ? 'live' : 'final'})`;
+
+    const card = byId('game-matchup');
+    card.classList.toggle('is-live', v.live);
+    card.innerHTML =
+      `<div class="gh-state">${state}</div>` +
+      `<div class="mu-top">` +
+        heroTeamHtml(v.away) +
+        `<div class="mu-score" aria-hidden="true">` +
+          `<span class="gh-num ${cls('a')}">${shown(v.runs.a)}</span>` +
+          `<span class="mu-dash">&ndash;</span>` +
+          `<span class="gh-num ${cls('h')}">${shown(v.runs.h)}</span>` +
+        `</div>` +
+        heroTeamHtml(v.home) +
+      `</div>`;
+
+    const meta = byId('game-meta');
+    const venue = v.info.get('Venue');
+    if (venue) { meta.textContent = venue; meta.hidden = false; } else { meta.hidden = true; }
+  }
+
+  // --------------------------------------------------------------------------
+  // Summary tab: linescore, decisions, scoring summary, top performers, game info
+  // --------------------------------------------------------------------------
+  function renderSummary(game, v) {
+    return section('Linescore', linescoreHtml(game, v)) +
+      decisionsHtml(v) +
+      scoringHtml(v) +
+      performersHtml(v) +
+      infoHtml(v);
+  }
+
+  function linescoreHtml(game, v) {
+    if (!game.ls) return emptyMsg('No linescore available for this game.');
+    const cols = Math.max(9, v.innings);
+    let head = `<thead><tr><th class="left">Team</th>`;
+    for (let i = 1; i <= cols; i++) head += `<th>${i}</th>`;
+    head += `<th class="gx-r">R</th><th>H</th><th>E</th><th>LOB</th></tr></thead>`;
+
+    const runCls = (side) => (v.live ? ' is-live' : (v.winner ? (v.winner === side ? ' is-win' : ' is-dim') : ''));
+    const row = (team, idx) => {
+      let cells = `<td class="left">${teamLinkHtml(team.id, esc(team.nick))}</td>`;
+      for (let i = 0; i < cols; i++) {
+        const inning = v.inn[i];
+        let val = inning ? inning[idx] : null;
+        // the home team didn't need to bat in the last inning
+        if ((val === null || val === undefined) && idx === 4 && inning && !v.live && i === v.innings - 1) val = 'X';
+        cells += `<td class="num">${esc(cellOrBlank(val))}</td>`;
+      }
+      const tot = v.lsTot(team.side);
+      const r = numOrNull(tot[0]) !== null ? numOrNull(tot[0]) : v.runs[team.side];
+      cells += `<td class="num gx-r${runCls(team.side)}">${esc(cellOrBlank(r))}</td>`;
+      for (let k = 1; k < 4; k++) cells += `<td class="num">${esc(cellOrBlank(tot[k]))}</td>`;
+      return `<tr>${cells}</tr>`;
+    };
+
+    return `<div class="table-scroll"><table class="ledger gx-line">${head}` +
+      `<tbody>${row(v.away, 0)}${row(v.home, 4)}</tbody></table></div>`;
+  }
+
+  function pitchLine(p) {
+    const parts = [];
+    if (p.ip !== undefined && p.ip !== null && p.ip !== '') parts.push(`${p.ip} IP`);
+    if (numOrNull(p.h) !== null) parts.push(`${p.h} H`);
+    if (numOrNull(p.er) !== null) parts.push(`${p.er} ER`);
+    if (numOrNull(p.bb) !== null) parts.push(`${p.bb} BB`);
+    if (numOrNull(p.k) !== null) parts.push(`${p.k} K`);
+    return parts.join(' \u00b7 ');
+  }
+
+  function batLine(p) {
+    const parts = [`${n0(p.h)}-for-${n0(p.ab)}`];
+    const add = (val, label) => { const n = n0(val); if (n > 0) parts.push(n > 1 ? `${n} ${label}` : label); };
+    add(p.hr, 'HR'); add(p.t, '3B'); add(p.d, '2B');
+    if (n0(p.rbi) > 0) parts.push(`${n0(p.rbi)} RBI`);
+    if (n0(p.r) > 0) parts.push(`${n0(p.r)} R`);
+    if (n0(p.bb) > 0) parts.push(`${n0(p.bb)} BB`);
+    if (n0(p.sb) > 0) parts.push(`${n0(p.sb)} SB`);
+    return parts.join(', ');
+  }
+
+  /** Simple "how big was his day" score used to pick the top hitters. */
+  function batScore(p) {
+    return n0(p.h) + n0(p.d) * 0.5 + n0(p.t) + n0(p.hr) * 3 + n0(p.rbi) * 1.5 + n0(p.r) * 0.5 + n0(p.sb) * 0.5 + n0(p.bb) * 0.3;
+  }
+
+  /** Pitchers who got a decision (the note on their line reads like "(W, 5-2)"). */
+  function decisionsOf(v) {
+    const out = [];
+    for (const team of [v.away, v.home]) {
+      for (const p of (team.data && Array.isArray(team.data.pit) ? team.data.pit : [])) {
+        const m = /^\(?\s*(W|L|SV|S|H|BS)\b/i.exec(String(p.note || '').trim());
+        if (!m) continue;
+        let kind = m[1].toUpperCase();
+        if (kind === 'S') kind = 'SV';
+        out.push({ kind, p, team });
+      }
+    }
+    return out;
+  }
+
+  function decisionsHtml(v) {
+    const decs = decisionsOf(v);
+    const defs = [['W', 'Win', 'win'], ['L', 'Loss', 'loss'], ['SV', 'Save', 'save']];
+    const cards = defs.map(([kind, label, cls]) => {
+      const d = decs.find(x => x.kind === kind);
+      if (!d) return '';
+      const recMatch = /,\s*([^)]*)/.exec(String(d.p.note));
+      const rec = recMatch && recMatch[1].trim() ? (kind === 'SV' ? `${recMatch[1].trim()} SV` : recMatch[1].trim()) : '';
+      return `<div class="gx-dec gx-dec--${cls}">` +
+        `<div class="gx-dec__kind">${label}</div>` +
+        `<div class="gx-dec__who">${teamLogoCardHtml(d.team.id)}` +
+          `<div><div class="gx-dec__name">${playerLink(d.p.id, d.p.n || 'Pitcher')}</div>` +
+          `<div class="gx-dec__line">${esc(pitchLine(d.p))}</div></div></div>` +
+        (rec ? `<div class="gx-dec__rec">${esc(rec)}</div>` : '') +
+      `</div>`;
+    }).join('');
+    return cards ? section('Decisions', `<div class="gx-dec-grid">${cards}</div>`) : '';
+  }
+
+  function scoreTagHtml(v, a, h) {
+    return `<span class="gx-score" title="Score after this half-inning">` +
+      `<span class="gx-score__t">${teamLogoCardHtml(v.away.id)}<b>${a}</b></span>` +
+      `<span class="gx-score__dash">&ndash;</span>` +
+      `<span class="gx-score__t">${teamLogoCardHtml(v.home.id)}<b>${h}</b></span></span>`;
+  }
+
+  function scoringHtml(v) {
+    if (v.plays.length === 0) return '';
+    const scoring = v.plays.filter(p => p && p.sc);
+    if (scoring.length === 0) {
+      return section('Scoring summary', emptyMsg(v.live ? 'No runs scored yet.' : 'No scoring plays recorded.'));
+    }
+    const groups = new Map();
+    for (const p of scoring) {
+      const key = `${p.in}-${p.t}`;
+      if (!groups.has(key)) groups.set(key, { inning: p.in, t: p.t, items: [] });
+      groups.get(key).items.push(p);
+    }
+    const html = [...groups.values()].map((g) => {
+      const bat = g.t === 0 ? v.away : v.home;
+      const inning = numOrNull(g.inning);
+      const after = v.innings > 0 && inning !== null ? scoreAfter(v, inning, g.t) : null;
+      return `<div class="gx-sum">` +
+        `<div class="gx-half"><span class="gx-half__title">${teamLogoCardHtml(bat.id)}` +
+          `<span>${esc(halfLabel(g.t, g.inning))}</span></span>${after ? scoreTagHtml(v, after[0], after[1]) : ''}</div>` +
+        `<ul class="gx-sum__list">${g.items.map(p => `<li>${esc(p.d || p.ev || '')}</li>`).join('')}</ul>` +
+      `</div>`;
+    }).join('');
+    return section('Scoring summary', html);
+  }
+
+  function performersHtml(v) {
+    const decs = decisionsOf(v);
+    const col = (team) => {
+      const d = team.data || {};
+      const bats = (Array.isArray(d.bat) ? d.bat : [])
+        .map(p => ({ p, s: batScore(p) })).filter(x => x.s >= 2)
+        .sort((a, b) => b.s - a.s).slice(0, 3);
+
+      const mine = decs.filter(x => x.team === team && ['W', 'L', 'SV'].includes(x.kind));
+      const pits = [];
+      const pit = Array.isArray(d.pit) ? d.pit : [];
+      if (pit[0]) {
+        const dec = mine.find(x => x.p === pit[0]);
+        pits.push({ p: pit[0], tag: dec ? `SP \u00b7 ${dec.kind}` : 'SP' });
+      }
+      for (const x of mine) if (!pits.some(y => y.p === x.p)) pits.push({ p: x.p, tag: x.kind });
+
+      const tag = (t) => (t ? `<span class="gx-perf__tag">${esc(t)}</span>` : '');
+      const rows = pits.map(({ p, tag: t }) =>
+        `<li><span class="gx-perf__who">${playerLink(p.id, p.n || 'Pitcher')}${tag(t)}</span>` +
+        `<span class="gx-perf__line">${esc(pitchLine(p))}</span></li>`)
+        .concat(bats.map(({ p }) =>
+        `<li><span class="gx-perf__who">${playerLink(p.id, p.n || 'Player')}${tag(p.pos)}</span>` +
+        `<span class="gx-perf__line">${esc(batLine(p))}</span></li>`));
+      if (!rows.length) return '';
+      return `<div class="gx-perf"><div class="gx-perf__head">${teamLinkHtml(team.id, esc(team.nick))}</div>` +
+        `<ul class="gx-perf__list">${rows.join('')}</ul></div>`;
+    };
+    const a = col(v.away), h = col(v.home);
+    return a || h ? section('Top performers', `<div class="gx-grid2">${a}${h}</div>`) : '';
+  }
+
+  function infoHtml(v) {
+    const order = ['Venue', 'First pitch', 'T', 'Att', 'Weather', 'Wind'];
+    const labels = { T: 'Time of game', Att: 'Attendance' };
+    const rows = [];
+    for (const k of order) if (v.info.has(k)) rows.push([labels[k] || k, v.info.get(k)]);
+    for (const [k, val] of v.info) if (!order.includes(k)) rows.push([k, val]);
+    if (v.officials.length) {
+      rows.push(['Umpires', v.officials.map(([pos, name]) => `${pos} \u2013 ${name}`).join(' \u00b7 ')]);
+    }
+    if (!rows.length) return '';
+    return section('Game info', `<table class="trophy-table">${rows.map(([label, val]) =>
+      `<tr><td class="trophy-label">${esc(label)}</td><td class="trophy-years">${esc(val)}</td></tr>`).join('')}</table>`);
+  }
+
+  // --------------------------------------------------------------------------
+  // Box score tab: team toggle, batting, pitching, notes
   // --------------------------------------------------------------------------
   const BAT_COLS = [
     ['pos', 'Pos'], ['ab', 'AB'], ['r', 'R'], ['h', 'H'], ['d', '2B'], ['t', '3B'],
@@ -5274,207 +5636,600 @@ function runGamePage() {
   const PIT_COLS = [
     ['ip', 'IP'], ['h', 'H'], ['r', 'R'], ['er', 'ER'], ['bb', 'BB'], ['k', 'K'], ['hr', 'HR'],
   ];
+  const BAT_KEYS = ['ab', 'r', 'h', 'd', 't', 'hr', 'rbi', 'bb', 'k', 'sb'];
 
-  function renderTeamBox(team, containerId, logoIdPrefix, gameInfoHtml) {
-    const container = document.getElementById(containerId);
-    if (!team) { container.innerHTML = ''; return; }
+  function batTotals(data) {
+    if (!data) return null;
+    if (data.tot && numOrNull(data.tot.ab) !== null) {
+      const o = {};
+      for (const k of BAT_KEYS) o[k] = n0(data.tot[k]);
+      return o;
+    }
+    if (Array.isArray(data.bat) && data.bat.length) {
+      const o = {};
+      for (const k of BAT_KEYS) o[k] = data.bat.reduce((s, p) => s + n0(p[k]), 0);
+      return o;
+    }
+    return null;
+  }
 
-    let html = `<h3 style="font-size:0.95rem;font-weight:600;display:flex;align-items:center;margin:8px 0 10px;">
-      <img class="team-logo-sm" id="${logoIdPrefix}-header" alt="">
-      <a class="team-link" href="team.html?id=${team.id}">${team.name}</a>
-    </h3>`;
+  function pitTotals(data) {
+    const pit = data && Array.isArray(data.pit) ? data.pit : [];
+    if (!pit.length) return null;
+    const o = { outs: 0, h: 0, r: 0, er: 0, bb: 0, k: 0, hr: 0, count: pit.length };
+    for (const p of pit) {
+      o.outs += ipToOuts(p.ip);
+      for (const k of ['h', 'r', 'er', 'bb', 'k', 'hr']) o[k] += n0(p[k]);
+    }
+    o.ip = outsToIp(o.outs);
+    return o;
+  }
 
-    if (gameInfoHtml) html += gameInfoHtml;
+  /** Highlights standout numbers in a batting line. */
+  function hotCls(key, val) {
+    const n = numOrNull(val);
+    if (n === null || n <= 0) return '';
+    if (key === 'd' || key === 't' || key === 'hr' || key === 'sb') return ' is-hot';
+    if ((key === 'h' || key === 'r' || key === 'rbi') && n >= 2) return ' is-hot';
+    return '';
+  }
+
+  function teamBoxHtml(team, v) {
+    const d = team.data;
+    if (!d) return emptyMsg(`No box score available for the ${team.nick}.`);
+
+    const tot = v.lsTot(team.side);
+    const kpiVals = [['Runs', v.runs[team.side]], ['Hits', numOrNull(tot[1])], ['Errors', numOrNull(tot[2])], ['LOB', numOrNull(tot[3])]]
+      .filter(([, x]) => x !== null);
+    let html = kpiVals.length
+      ? `<div class="gx-kpis">${kpiVals.map(([l, x]) =>
+          `<div class="gx-kpi"><div class="gx-kpi__v">${x}</div><div class="gx-kpi__l">${l}</div></div>`).join('')}</div>`
+      : '';
 
     // batting
-    html += `<div class="table-scroll"><table class="ledger"><thead><tr><th class="left">Player</th>`;
-    for (const [, label] of BAT_COLS) html += `<th>${label}</th>`;
-    html += `</tr></thead><tbody>`;
-    for (const p of team.bat || []) {
-      html += `<tr><td class="left"><a class="team-link" href="player.html?id=${p.id}">${p.n || '—'}</a></td>`;
-      for (const [key] of BAT_COLS) html += `<td class="num">${cellOrBlank(p[key])}</td>`;
-      html += `</tr>`;
+    const bt = batTotals(d);
+    html += `<h3 class="sub-heading">Batting</h3><div class="table-scroll"><table class="ledger gx-box"><thead><tr>` +
+      `<th class="left">Player</th>` +
+      BAT_COLS.map(([k, l]) => `<th${k === 'pos' ? ' class="left"' : ''}>${l}</th>`).join('') +
+      `</tr></thead><tbody>`;
+    for (const p of (Array.isArray(d.bat) ? d.bat : [])) {
+      html += `<tr><td class="left">${playerLink(p.id, p.n || '\u2014')}</td>` +
+        BAT_COLS.map(([k]) => k === 'pos'
+          ? `<td class="gx-pos">${esc(cellOrBlank(p.pos))}</td>`
+          : `<td class="num${hotCls(k, p[k])}">${esc(cellOrBlank(p[k]))}</td>`).join('') +
+        `</tr>`;
     }
-    if (team.tot) {
-      html += `<tr><td class="left" style="font-weight:600;">Total</td>`;
-      for (const [key] of BAT_COLS) html += `<td class="num" style="font-weight:600;">${key === 'pos' ? '' : cellOrBlank(team.tot[key])}</td>`;
-      html += `</tr>`;
+    html += `</tbody>`;
+    if (bt) {
+      html += `<tfoot><tr><td class="left">Total</td>` +
+        BAT_COLS.map(([k]) => (k === 'pos' ? '<td></td>' : `<td class="num">${bt[k]}</td>`)).join('') +
+        `</tr></tfoot>`;
     }
-    html += `</tbody></table></div>`;
+    html += `</table></div>`;
 
     // pitching
-    if (team.pit && team.pit.length) {
-      html += `<div class="table-scroll" style="margin-top:14px;"><table class="ledger"><thead><tr><th class="left">Pitcher</th>`;
-      for (const [, label] of PIT_COLS) html += `<th>${label}</th>`;
-      html += `</tr></thead><tbody>`;
-      for (const p of team.pit) {
-        const noteText = p.note ? ` <span style="color:var(--text-tertiary);">${p.note}</span>` : '';
-        html += `<tr><td class="left"><a class="team-link" href="player.html?id=${p.id}">${p.n || '—'}</a>${noteText}</td>`;
-        for (const [key] of PIT_COLS) html += `<td class="num">${cellOrBlank(p[key])}</td>`;
-        html += `</tr>`;
+    const pit = Array.isArray(d.pit) ? d.pit : [];
+    if (pit.length) {
+      const pt = pitTotals(d);
+      html += `<h3 class="sub-heading" style="margin-top:26px;">Pitching</h3><div class="table-scroll"><table class="ledger gx-box"><thead><tr>` +
+        `<th class="left">Pitcher</th>${PIT_COLS.map(([, l]) => `<th>${l}</th>`).join('')}</tr></thead><tbody>`;
+      for (const p of pit) {
+        const note = p.note ? ` <span class="gx-note">${esc(p.note)}</span>` : '';
+        html += `<tr><td class="left">${playerLink(p.id, p.n || '\u2014')}${note}</td>` +
+          PIT_COLS.map(([k]) => `<td class="num">${esc(cellOrBlank(p[k]))}</td>`).join('') + `</tr>`;
       }
-      html += `</tbody></table></div>`;
+      html += `</tbody><tfoot><tr><td class="left">Total</td>` +
+        PIT_COLS.map(([k]) => `<td class="num">${esc(String(pt[k]))}</td>`).join('') +
+        `</tr></tfoot></table></div>`;
     }
 
-    // notes (2B/3B/HR/SB etc. narrative lines), if present
-    if (team.notes && Object.keys(team.notes).length) {
-      html += `<div style="margin-top:12px;font-size:0.85rem;color:var(--text-secondary);">`;
-      for (const [title, rows] of Object.entries(team.notes)) {
-        const line = rows.map(r => Array.isArray(r) ? r.join(' ') : String(r)).join('; ');
-        html += `<div><strong>${title}:</strong> ${line}</div>`;
-      }
-      html += `</div>`;
+    // notes (2B / 3B / HR / SB narrative lines), if present
+    if (d.notes && typeof d.notes === 'object' && Object.keys(d.notes).length) {
+      html += `<div class="gx-notes">` + Object.entries(d.notes).map(([title, rows]) => {
+        const list = (Array.isArray(rows) ? rows : [rows])
+          .map(r => (Array.isArray(r) ? r.join(' ') : String(r))).join('; ');
+        return `<div><strong>${esc(prettyKey(String(title).toLowerCase()))}:</strong> ${esc(list)}</div>`;
+      }).join('') + `</div>`;
     }
-
-    container.innerHTML = html;
-    setImgWithFallback(document.getElementById(`${logoIdPrefix}-header`), `assets/logos/${team.id}.webp`);
+    return html;
   }
 
-  function renderBoxScore(game) {
-    if (!game.box) return;
-
-    // The page contract has no dedicated slot for game-wide info (attendance,
-    // time of game, umpires) - it only defines linescore / boxscore-away /
-    // boxscore-home / winprob / play-by-play sections. Since this information
-    // applies to the whole game, not one team, it's shown once at the top of
-    // the AWAY box score section (the first one rendered) rather than
-    // repeated or arbitrarily attached to the home team instead.
-    let gameInfoHtml = '';
-    const infoRows = (game.box.info || []).filter(([label, value]) => label || value);
-    const offRows = game.box.off || [];
-    if (infoRows.length || offRows.length) {
-      gameInfoHtml = `<div style="font-size:0.85rem;color:var(--text-tertiary);margin-bottom:16px;">`;
-      if (infoRows.length) {
-        gameInfoHtml += infoRows.map(([label, value]) => `${label}: ${value}`).join(' &middot; ');
-      }
-      if (offRows.length) {
-        if (infoRows.length) gameInfoHtml += '<br>';
-        gameInfoHtml += 'Umpires: ' + offRows.map(([pos, name]) => `${pos} - ${name}`).join(', ');
-      }
-      gameInfoHtml += `</div>`;
-    }
-
-    renderTeamBox(game.box.a, 'boxscore-away', 'box-away', gameInfoHtml);
-    renderTeamBox(game.box.h, 'boxscore-home', 'box-home', '');
-  }
-
-  // --------------------------------------------------------------------------
-  // Win probability - self-contained inline SVG line chart, no external
-  // charting library. The homeTeamWinProbability field's scale (0-1 vs 0-100)
-  // was never independently confirmed in this project, so this normalizes
-  // automatically: if any value exceeds 1, the data is already 0-100 and is
-  // left as-is; otherwise it's treated as a 0-1 fraction and scaled up.
-  // --------------------------------------------------------------------------
-  function renderWinProbability(game) {
-    const container = document.getElementById('winprob-chart');
-    const points = (game.wp || []).filter(p => p[1] !== null && p[1] !== undefined);
-
-    if (points.length < 2) {
-      container.innerHTML = '<p class="state-msg">No win probability data available for this game.</p>';
+  function renderBox() {
+    const root = byId('g-box');
+    const v = view;
+    if (!v.away.data && !v.home.data) {
+      root.innerHTML = emptyMsg('No box score available for this game.');
       return;
     }
-
-    const maxRaw = Math.max(...points.map(p => p[1]));
-    const scale = maxRaw > 1 ? 1 : 100;
-
-    const W = 700, H = 200, PAD = 24;
-    const n = points.length;
-    const xFor = (i) => PAD + (i / (n - 1)) * (W - 2 * PAD);
-    const yFor = (pct) => PAD + (1 - pct / 100) * (H - 2 * PAD);
-
-    const pathD = points
-      .map((p, i) => `${i === 0 ? 'M' : 'L'} ${xFor(i).toFixed(1)} ${yFor(p[1] * scale).toFixed(1)}`)
-      .join(' ');
-
-    const homeName = (game.box && game.box.h && game.box.h.name) || 'Home';
-    const awayName = (game.box && game.box.a && game.box.a.name) || 'Away';
-
-    container.innerHTML = `
-      <svg viewBox="0 0 ${W} ${H}" style="width:100%;height:auto;max-width:700px;" role="img"
-           aria-label="Home team win probability over the course of the game">
-        <line x1="${PAD}" y1="${yFor(50)}" x2="${W - PAD}" y2="${yFor(50)}"
-              stroke="var(--border-strong)" stroke-width="1" stroke-dasharray="4 4"/>
-        <path d="${pathD}" fill="none" stroke="var(--accent-hover)" stroke-width="2"/>
-        <text x="${PAD}" y="${PAD - 8}" fill="var(--text-tertiary)" font-size="11">100% ${homeName}</text>
-        <text x="${PAD}" y="${H - PAD + 16}" fill="var(--text-tertiary)" font-size="11">100% ${awayName}</text>
-        <text x="${W - PAD}" y="${yFor(50) - 6}" fill="var(--text-tertiary)" font-size="11" text-anchor="end">50%</text>
-      </svg>`;
+    const btn = (team) => {
+      const on = ui.boxSide === team.side;
+      return `<button type="button" class="gx-seg__btn${on ? ' is-active' : ''}" data-side="${team.side}" aria-pressed="${on}">` +
+        `${teamLogoCardHtml(team.id)}<span>${esc(team.nick)}</span></button>`;
+    };
+    const team = ui.boxSide === 'h' ? v.home : v.away;
+    root.innerHTML =
+      `<div class="gx-controls"><div class="gx-seg" role="group" aria-label="Choose a team">${btn(v.away)}${btn(v.home)}</div></div>` +
+      teamBoxHtml(team, v);
   }
 
   // --------------------------------------------------------------------------
-  // Play by play
+  // Team stats tab: side-by-side comparison bars + runs by inning
   // --------------------------------------------------------------------------
-  function formatPitch(pt) {
-    const [call, type, speed] = pt;
-    let s = call || '?';
-    if (type) s += ` ${type}`;
-    if (speed !== null && speed !== undefined) s += ` ${speed}mph`;
-    return s;
+  const PITCH_STRIKE_RE = /strike|foul|in play|missed bunt/i;
+
+  function sideStats(v, side) {
+    const team = side === 'a' ? v.away : v.home;
+    const d = team.data || {};
+    const bt = batTotals(d), pt = pitTotals(d), ls = v.lsTot(side);
+    const hits = numOrNull(ls[1]) !== null ? numOrNull(ls[1]) : (bt ? bt.h : null);
+    return {
+      runs: v.runs[side], hits, errors: numOrNull(ls[2]), lob: numOrNull(ls[3]),
+      ab: bt ? bt.ab : null,
+      avg: bt && bt.ab > 0 ? bt.h / bt.ab : null,
+      d: bt ? bt.d : null, t: bt ? bt.t : null, hr: bt ? bt.hr : null, rbi: bt ? bt.rbi : null,
+      bb: bt ? bt.bb : null, k: bt ? bt.k : null, sb: bt ? bt.sb : null,
+      pUsed: pt ? pt.count : null, pK: pt ? pt.k : null, pBB: pt ? pt.bb : null,
+      pH: pt ? pt.h : null, pER: pt ? pt.er : null, pHR: pt ? pt.hr : null,
+    };
   }
 
-  function formatHitData(hd) {
-    if (!hd || hd.length === 0) return null;
-    const [speed, angle, distance, trajectory] = hd;
+  /** Pitch counts / speeds (by the pitching side) and batted balls (by the batting side), read from the plays. */
+  function trackingOf(v) {
+    const mk = () => ({ pitches: 0, strikes: 0, speeds: [] });
+    const pitching = { a: mk(), h: mk() };
+    const batted = { a: [], h: [] };
+    let hasPitch = false, hasHit = false;
+    for (const p of v.plays) {
+      if (!p || (p.t !== 0 && p.t !== 1)) continue;
+      const batSide = p.t === 0 ? 'a' : 'h';
+      const pitSide = p.t === 0 ? 'h' : 'a';
+      for (const pt of (Array.isArray(p.pt) ? p.pt : [])) {
+        if (!Array.isArray(pt)) continue;
+        const o = pitching[pitSide];
+        o.pitches++;
+        hasPitch = true;
+        if (PITCH_STRIKE_RE.test(String(pt[0] || ''))) o.strikes++;
+        const sp = numOrNull(pt[2]);
+        if (sp !== null && sp > 0) o.speeds.push(sp);
+      }
+      if (Array.isArray(p.hd)) {
+        const speed = numOrNull(p.hd[0]), dist = numOrNull(p.hd[2]);
+        if (speed !== null || dist !== null) {
+          batted[batSide].push({ speed, dist });
+          hasHit = true;
+        }
+      }
+    }
+    return { pitching, batted, hasPitch, hasHit };
+  }
+
+  /** One comparison row: away value | label | home value, with a split bar underneath. */
+  function statRowHtml(label, a, h, opts = {}) {
+    if (a === null || a === undefined || h === null || h === undefined) return '';
+    if (!Number.isFinite(a) || !Number.isFinite(h)) return '';
+    const fmt = opts.fmt || ((x) => String(x));
+    const lead = opts.lead || 'high';   // which side is "better": 'high' | 'low' | 'none'
+    let leader = null;
+    if (lead !== 'none' && a !== h) leader = ((lead === 'high') === (a > h)) ? 'a' : 'h';
+    const total = a + h;
+    const grow = (x) => (total > 0 ? x : 1);
+    const segCls = (side) => `gx-bar__seg gx-bar__seg--${side}${leader === side ? ' is-lead' : ''}`;
+    const aria = `${label}: ${fmt(a)} to ${fmt(h)}`;
+    return `<div class="gx-stat">` +
+      `<div class="gx-stat__row">` +
+        `<span class="gx-stat__v${leader === 'a' ? ' is-lead' : ''}">${esc(fmt(a))}</span>` +
+        `<span class="gx-stat__label">${esc(label)}</span>` +
+        `<span class="gx-stat__v${leader === 'h' ? ' is-lead' : ''}">${esc(fmt(h))}</span>` +
+      `</div>` +
+      `<div class="gx-bar" role="img" aria-label="${esc(aria)}">` +
+        `<span class="${segCls('a')}" style="flex:${grow(a)} 1 0;"></span>` +
+        `<span class="${segCls('h')}" style="flex:${grow(h)} 1 0;"></span>` +
+      `</div></div>`;
+  }
+
+  function statGroup(title, rows) {
+    const html = rows.join('');
+    return html ? `<h3 class="sub-heading gx-sub">${title}</h3><div class="gx-stats">${html}</div>` : '';
+  }
+
+  function runsChartHtml(v) {
+    if (!v.innings) return '';
+    const cols = Math.max(9, v.innings);
+    const cells = [];
+    let max = 3;
+    for (let i = 0; i < cols; i++) {
+      const row = v.inn[i] || [];
+      const a = numOrNull(row[0]), h = numOrNull(row[4]);
+      cells.push([a, h]);
+      max = Math.max(max, a || 0, h || 0);
+    }
+    const GW = 46, PADX = 14, PT = 22, PB = 26, BH = 130, BW = 15;
+    const W = PADX * 2 + GW * cols, CH = PT + BH + PB, y0 = PT + BH;
+    let bars = '', labels = '';
+    cells.forEach(([a, h], i) => {
+      const gx = PADX + i * GW + GW / 2;
+      const bar = (val, x, cls) => {
+        if (val === null) return '';
+        const height = val > 0 ? Math.max(3, (val / max) * BH) : 2;
+        return `<rect class="gx-rb gx-rb--${cls}${val === 0 ? ' is-zero' : ''}" x="${x.toFixed(1)}" y="${(y0 - height).toFixed(1)}" ` +
+          `width="${BW}" height="${height.toFixed(1)}" rx="2"/>` +
+          (val > 0 ? `<text class="gx-rb__v" x="${(x + BW / 2).toFixed(1)}" y="${(y0 - height - 5).toFixed(1)}" text-anchor="middle">${val}</text>` : '');
+      };
+      bars += bar(a, gx - BW - 1, 'a') + bar(h, gx + 1, 'h');
+      labels += `<text class="gx-rb__x" x="${gx.toFixed(1)}" y="${CH - 8}" text-anchor="middle">${i + 1}</text>`;
+    });
+    return `<div class="gx-rchart"><svg viewBox="0 0 ${W} ${CH}" style="width:100%;max-width:${Math.round(W * 1.35)}px;height:auto;" ` +
+      `role="img" aria-label="Runs by inning for both teams">` +
+      `<line class="gx-rb__axis" x1="${PADX}" y1="${y0}" x2="${W - PADX}" y2="${y0}"/>${bars}${labels}</svg></div>`;
+  }
+
+  function renderStats(v) {
+    if (!v.away.data && !v.home.data && !v.innings && !v.plays.length) {
+      return emptyMsg('No statistics available for this game.');
+    }
+    const A = sideStats(v, 'a'), H = sideStats(v, 'h');
+    const tr = trackingOf(v);
+    const row = (label, a, h, opts) => statRowHtml(label, a, h, opts);
+
+    const avgOf = (arr) => (arr.length ? arr.reduce((s, x) => s + x, 0) / arr.length : null);
+    const maxOf = (arr) => (arr.length ? Math.max(...arr) : null);
+    const pct = (x) => `${Math.round(x * 100)}%`;
+    const mph = (x) => `${x.toFixed(1)} mph`;
+    const ft = (x) => `${Math.round(x)} ft`;
+    const none = { lead: 'none' }, low = { lead: 'low' };
+
+    const batting = statGroup('Batting', [
+      row('Runs', A.runs, H.runs),
+      row('Hits', A.hits, H.hits),
+      row('Team AVG', A.avg, H.avg, { fmt: fmtAvg }),
+      row('Home runs', A.hr, H.hr),
+      row('Doubles', A.d, H.d),
+      row('Triples', A.t, H.t),
+      row('RBI', A.rbi, H.rbi),
+      row('Walks', A.bb, H.bb),
+      row('Strikeouts', A.k, H.k, low),
+      row('Stolen bases', A.sb, H.sb),
+      row('Errors', A.errors, H.errors, low),
+      row('Left on base', A.lob, H.lob, none),
+    ]);
+
+    const pitching = statGroup('Pitching', [
+      row('Pitchers used', A.pUsed, H.pUsed, none),
+      row('Strikeouts', A.pK, H.pK),
+      row('Walks allowed', A.pBB, H.pBB, low),
+      row('Hits allowed', A.pH, H.pH, low),
+      row('Earned runs', A.pER, H.pER, low),
+      row('Home runs allowed', A.pHR, H.pHR, low),
+    ]);
+
+    let tracking = '';
+    if (tr.hasPitch) {
+      const pa = tr.pitching.a, ph = tr.pitching.h;
+      tracking = statGroup('Pitch tracking', [
+        row('Pitches thrown', pa.pitches, ph.pitches, none),
+        row('Strike %', pa.pitches ? pa.strikes / pa.pitches : null, ph.pitches ? ph.strikes / ph.pitches : null, { fmt: pct }),
+        row('Avg velocity', avgOf(pa.speeds), avgOf(ph.speeds), { fmt: mph, lead: 'none' }),
+        row('Top velocity', maxOf(pa.speeds), maxOf(ph.speeds), { fmt: mph, lead: 'none' }),
+      ]);
+    }
+
+    let contact = '';
+    if (tr.hasHit) {
+      const sp = (side) => tr.batted[side].filter(b => b.speed !== null).map(b => b.speed);
+      const ds = (side) => tr.batted[side].filter(b => b.dist !== null && b.dist > 0).map(b => b.dist);
+      const sa = sp('a'), sh = sp('h');
+      contact = statGroup('Batted balls', [
+        row('Balls tracked', sa.length, sh.length, none),
+        row('Avg exit velocity', avgOf(sa), avgOf(sh), { fmt: mph }),
+        row('Max exit velocity', maxOf(sa), maxOf(sh), { fmt: mph }),
+        row('Hard hit (95+ mph)', sa.filter(x => x >= 95).length, sh.filter(x => x >= 95).length),
+        row('Longest batted ball', maxOf(ds('a')), maxOf(ds('h')), { fmt: ft }),
+      ]);
+    }
+
+    const legend = `<div class="gx-legend">` +
+      `<span class="gx-legend__side gx-legend__side--a">${teamLogoCardHtml(v.away.id)}<span>${esc(v.away.nick)}</span></span>` +
+      `<span class="gx-legend__side gx-legend__side--h"><span>${esc(v.home.nick)}</span>${teamLogoCardHtml(v.home.id)}</span>` +
+    `</div>`;
+
+    const runs = runsChartHtml(v);
+    const body = (runs ? `<h3 class="sub-heading gx-sub">Runs by inning</h3>${runs}` : '') + batting + pitching + tracking + contact;
+    return body ? legend + body : emptyMsg('No statistics available for this game.');
+  }
+
+  // --------------------------------------------------------------------------
+  // Plays tab: filters, half-inning groups, expandable pitch sequences
+  // --------------------------------------------------------------------------
+  const HIT_RE = /^(single|double|triple|home run)$/i;
+
+  function formatHit(hd) {
+    if (!Array.isArray(hd)) return null;
+    const speed = numOrNull(hd[0]), angle = numOrNull(hd[1]), dist = numOrNull(hd[2]);
     const parts = [];
-    if (speed !== null && speed !== undefined) parts.push(`${speed} mph`);
-    if (angle !== null && angle !== undefined) parts.push(`${angle}\u00b0`);
-    if (distance !== null && distance !== undefined) parts.push(`${distance} ft`);
-    if (trajectory !== null && trajectory !== undefined) parts.push(trajectory);
-    return parts.length ? parts.join(', ') : null;
+    if (speed !== null) parts.push(`Exit velocity ${speed} mph`);
+    if (angle !== null) parts.push(`Launch angle ${angle}\u00b0`);
+    if (dist !== null && dist > 0) parts.push(`${dist} ft`);
+    if (hd[3] !== null && hd[3] !== undefined && hd[3] !== '') parts.push(prettyKey(hd[3]));
+    return parts.length ? parts.join(' \u00b7 ') : null;
   }
 
-  function renderPlayByPlay(game) {
-    const container = document.getElementById('playbyplay-list');
-    const plays = game.plays || [];
-    const names = game.names || {};
-    const away = game.box && game.box.a;
-    const home = game.box && game.box.h;
+  function pitchTableHtml(pitches) {
+    const kind = (call) => {
+      const c = String(call || '');
+      if (/in play/i.test(c)) return 'play';
+      if (/strike|foul/i.test(c)) return 'strike';
+      if (/ball|hit by pitch|pitchout/i.test(c)) return 'ball';
+      return 'strike';
+    };
+    const rows = pitches.map((pt, i) => {
+      const sp = numOrNull(pt[2]);
+      return `<tr class="gx-pc--${kind(pt[0])}"><td class="num">${i + 1}</td><td>${esc(pt[0] || '\u2014')}</td>` +
+        `<td>${esc(pt[1] || '\u2014')}</td><td class="num">${sp === null ? '\u2014' : fmtNum(sp, 1)}</td></tr>`;
+    }).join('');
+    return `<div class="gx-pitches"><table class="gx-pt"><thead><tr><th>#</th><th>Result</th><th>Pitch</th><th>mph</th></tr></thead>` +
+      `<tbody>${rows}</tbody></table></div>`;
+  }
 
-    if (plays.length === 0) {
-      container.innerHTML = '<p class="state-msg">No play-by-play data available for this game.</p>';
+  function playHtml(p, v) {
+    const nameOf = (id) => (id !== null && id !== undefined && v.names[id]) ? v.names[id] : (id !== null && id !== undefined ? `Player ${id}` : null);
+    const bn = nameOf(p.bt) || 'Batter';
+    const pn = nameOf(p.p) || 'Pitcher';
+    const ev = String(p.ev || '');
+    const isHr = /^home run$/i.test(ev);
+    const isHit = HIT_RE.test(ev);
+
+    const tags = [];
+    if (ev) tags.push(`<span class="gx-tag${isHr ? ' gx-tag--hr' : (isHit ? ' gx-tag--hit' : '')}">${esc(ev)}</span>`);
+    if (p.sc) tags.push(`<span class="gx-tag gx-tag--sc">Scoring play</span>`);
+
+    const pitches = Array.isArray(p.pt) ? p.pt.filter(Array.isArray) : [];
+    const hit = formatHit(p.hd);
+    let more = '';
+    if (pitches.length || hit) {
+      const sum = [pitches.length ? `${pitches.length} pitch${pitches.length === 1 ? '' : 'es'}` : null, hit ? 'Batted ball' : null]
+        .filter(Boolean).join(' \u00b7 ');
+      more = `<details class="gx-more" data-i="${p.i}"${ui.openPlays.has(p.i) ? ' open' : ''}><summary>${sum}</summary>` +
+        (hit ? `<div class="gx-hit">${esc(hit)}</div>` : '') +
+        (pitches.length ? pitchTableHtml(pitches) : '') +
+        `</details>`;
+    }
+    const actions = Array.isArray(p.ac) && p.ac.length
+      ? `<div class="gx-play__ac">${p.ac.map(a => esc(Array.isArray(a) ? a.join(' ') : String(a))).join(' \u00b7 ')}</div>` : '';
+
+    return `<li class="gx-play${p.sc ? ' is-scoring' : ''}">` +
+      `<div class="gx-play__top"><span class="gx-play__who">${playerLink(p.bt, bn)} <span class="dim">vs</span> ${playerLink(p.p, pn)}</span>` +
+      `<span class="gx-play__tags">${tags.join('')}</span></div>` +
+      `<div class="gx-play__desc">${esc(p.d || p.ev || '')}</div>${actions}${more}</li>`;
+  }
+
+  function renderPlays() {
+    const root = byId('g-plays');
+    const v = view;
+    if (!v.plays.length) {
+      root.innerHTML = emptyMsg('No play-by-play data available for this game.');
       return;
     }
 
-    const items = plays.map((p, idx) => {
-      const battingTeam = p.t === 0 ? away : home; // top of inning = away batting
-      const half = p.t === 0 ? 'Top' : 'Bottom';
-      const batterName = names[p.bt] || `Player ${p.bt}`;
-      const pitcherName = names[p.p] || `Player ${p.p}`;
-      const scoring = p.sc ? ' <span class="badge" style="border-color:var(--accent-hover);color:var(--accent-hover);">Scoring play</span>' : '';
+    const innings = [...new Set(v.plays.map(p => numOrNull(p.in)).filter(x => x !== null))].sort((a, b) => a - b);
+    if (ui.playInning !== 'all' && !innings.includes(Number(ui.playInning))) ui.playInning = 'all';
+    const order = ui.playOrder || (v.live ? 'new' : 'old');
+    const filters = [['all', 'All plays'], ['scoring', 'Scoring'], ['hits', 'Hits'], ['hr', 'Home runs']];
 
-      let extra = '';
-      if (p.pt && p.pt.length) {
-        extra += `<div style="font-size:0.8rem;color:var(--text-tertiary);margin-top:2px;">
-          Pitches: ${p.pt.map(formatPitch).join(', ')}</div>`;
-      }
-      if (p.hd) {
-        const hit = formatHitData(p.hd);
-        if (hit) extra += `<div style="font-size:0.8rem;color:var(--text-tertiary);">Batted ball: ${hit}</div>`;
-      }
-      if (p.ac && p.ac.length) {
-        extra += `<div style="font-size:0.8rem;color:var(--text-tertiary);">${p.ac.join(' &middot; ')}</div>`;
-      }
+    const passes = (p) => {
+      if (ui.playFilter === 'scoring') return !!p.sc;
+      if (ui.playFilter === 'hits') return HIT_RE.test(String(p.ev || ''));
+      if (ui.playFilter === 'hr') return /^home run$/i.test(String(p.ev || ''));
+      return true;
+    };
 
-      return `<li>
-        <span class="yr" style="display:inline-flex;align-items:center;gap:4px;">
-          <img class="team-logo-sm" id="pbp-logo-${idx}" alt="" style="width:16px;height:16px;">
-          ${half} ${p.in}
-        </span>
-        <a class="team-link" href="player.html?id=${p.bt}">${batterName}</a> vs
-        <a class="team-link" href="player.html?id=${p.p}">${pitcherName}</a>${scoring}
-        <div>${p.d || p.ev || ''}</div>
-        ${extra}
-      </li>`;
-    });
+    const controls = `<div class="gx-controls">` +
+      `<div class="gx-seg" role="group" aria-label="Filter plays">` +
+        filters.map(([k, l]) => `<button type="button" class="gx-seg__btn${ui.playFilter === k ? ' is-active' : ''}" ` +
+          `data-filter="${k}" aria-pressed="${ui.playFilter === k}">${l}</button>`).join('') +
+      `</div>` +
+      `<label class="gx-sel"><span>Inning</span><select data-inning aria-label="Inning">` +
+        `<option value="all">All</option>` +
+        innings.map(n => `<option value="${n}"${String(ui.playInning) === String(n) ? ' selected' : ''}>${n}</option>`).join('') +
+      `</select></label>` +
+      `<button type="button" class="gx-seg__btn gx-order" data-order="${order === 'new' ? 'old' : 'new'}">` +
+        `${order === 'new' ? 'Newest first \u2193' : 'Oldest first \u2191'}</button>` +
+    `</div>`;
 
-    container.innerHTML = `<ul class="timeline">${items.join('')}</ul>`;
+    let list = v.plays.filter(passes);
+    if (ui.playInning !== 'all') list = list.filter(p => Number(p.in) === Number(ui.playInning));
+    if (!list.length) {
+      root.innerHTML = controls + emptyMsg('No plays match this filter.');
+      return;
+    }
 
-    plays.forEach((p, idx) => {
-      const team = p.t === 0 ? away : home;
-      if (team) {
-        setImgWithFallback(document.getElementById(`pbp-logo-${idx}`), `assets/logos/${team.id}.webp`);
-      }
-    });
+    // plays are in game order, so each half-inning is one run of neighbours
+    const groups = [];
+    let cur = null;
+    for (const p of list) {
+      const key = `${p.in}-${p.t}`;
+      if (!cur || cur.key !== key) { cur = { key, inning: p.in, t: p.t, items: [] }; groups.push(cur); }
+      cur.items.push(p);
+    }
+    if (order === 'new') { groups.reverse(); groups.forEach(g => g.items.reverse()); }
+
+    const html = groups.map((g) => {
+      const bat = g.t === 0 ? v.away : v.home;
+      const inning = numOrNull(g.inning);
+      const after = v.innings > 0 && inning !== null ? scoreAfter(v, inning, g.t) : null;
+      return `<div class="gx-sum">` +
+        `<div class="gx-half"><span class="gx-half__title">${teamLogoCardHtml(bat.id)}` +
+          `<span>${esc(halfLabel(g.t, g.inning))}</span><span class="gx-half__sub">${esc(bat.nick)} batting</span></span>` +
+          `${after ? scoreTagHtml(v, after[0], after[1]) : ''}</div>` +
+        `<ul class="gx-plays">${g.items.map(p => playHtml(p, v)).join('')}</ul></div>`;
+    }).join('');
+
+    root.innerHTML = controls +
+      `<p class="tab-note">${list.length === v.plays.length ? `${list.length} plays` : `${list.length} of ${v.plays.length} plays`}</p>` + html;
+  }
+
+  // --------------------------------------------------------------------------
+  // Win probability tab
+  // The homeTeamWinProbability scale (0-1 vs 0-100) was never independently
+  // confirmed in this project, so it normalises automatically: if any value
+  // exceeds 1 the data is already 0-100, otherwise it is scaled up.
+  // When the probability list lines up one-to-one with the plays, the chart also
+  // shows inning markers, dots on scoring plays and the play behind each point.
+  // --------------------------------------------------------------------------
+  function renderWinProb() {
+    const root = byId('g-winprob');
+    const v = view, game = current;
+    const pts = (Array.isArray(game.wp) ? game.wp : []).filter(p => Array.isArray(p) && numOrNull(p[1]) !== null);
+    if (pts.length < 2) {
+      root.innerHTML = emptyMsg('No win probability data available for this game.');
+      return;
+    }
+
+    const maxRaw = Math.max(...pts.map(p => Number(p[1])));
+    const scale = maxRaw > 1 ? 1 : 100;
+    const vals = pts.map(p => Number(p[1]) * scale);   // home team win probability, 0-100
+    const n = pts.length;
+    const maxIdx = Math.max(...pts.map(p => Number(p[0])));
+    const aligned = v.plays.length > 0 && Number.isInteger(maxIdx) && maxIdx + 1 === v.plays.length;
+    const playAt = (k) => (aligned ? (v.plays[Number(pts[k][0])] || null) : null);
+
+    const W = 720, H = 300, PL = 46, PR = 14, PT = 16, PB = 30;
+    const xFor = (k) => PL + (k / (n - 1)) * (W - PL - PR);
+    const yFor = (p) => PT + (1 - p / 100) * (H - PT - PB);
+    const yMid = yFor(50);
+    const f1 = (x) => x.toFixed(1);
+
+    const line = vals.map((p, k) => `${k === 0 ? 'M' : 'L'}${f1(xFor(k))} ${f1(yFor(p))}`).join(' ');
+    const area = `${line} L${f1(xFor(n - 1))} ${f1(yMid)} L${f1(xFor(0))} ${f1(yMid)} Z`;
+
+    let grid = '';
+    for (const p of [100, 75, 50, 25, 0]) {
+      const y = yFor(p);
+      const lab = p === 50 ? '50%' : `${p > 50 ? p : 100 - p}%`;
+      const side = p === 50 ? '' : (p > 50 ? ' wp-lab--h' : ' wp-lab--a');
+      grid += `<line class="wp-grid${p === 50 ? ' wp-grid--mid' : ''}" x1="${PL}" y1="${f1(y)}" x2="${W - PR}" y2="${f1(y)}"/>` +
+        `<text class="wp-lab${side}" x="${PL - 8}" y="${f1(y + 4)}" text-anchor="end">${lab}</text>`;
+    }
+
+    let axis = '';
+    if (aligned) {
+      const posByPlay = new Map(pts.map((p, k) => [Number(p[0]), k]));
+      const starts = [];
+      const seen = new Set();
+      v.plays.forEach((p, i) => {
+        const inn = numOrNull(p.in);
+        if (inn === null || seen.has(inn) || !posByPlay.has(i)) return;
+        seen.add(inn);
+        starts.push([inn, posByPlay.get(i)]);
+      });
+      starts.forEach(([inn, k], j) => {
+        const x0 = xFor(k);
+        const x1 = j + 1 < starts.length ? xFor(starts[j + 1][1]) : xFor(n - 1);
+        if (j > 0) axis += `<line class="wp-inn" x1="${f1(x0)}" y1="${PT}" x2="${f1(x0)}" y2="${H - PB}"/>`;
+        axis += `<text class="wp-axis" x="${f1((x0 + x1) / 2)}" y="${H - 10}" text-anchor="middle">${inn}</text>`;
+      });
+    } else {
+      axis = `<text class="wp-axis" x="${PL}" y="${H - 10}" text-anchor="start">Start</text>` +
+        `<text class="wp-axis" x="${W - PR}" y="${H - 10}" text-anchor="end">${v.live ? 'Now' : 'End'}</text>`;
+    }
+
+    let dots = '';
+    if (aligned) {
+      vals.forEach((p, k) => {
+        const pl = playAt(k);
+        if (pl && pl.sc) dots += `<circle class="wp-sc" cx="${f1(xFor(k))}" cy="${f1(yFor(p))}" r="3.2"/>`;
+      });
+    }
+
+    const svg = `<svg class="wp-svg" viewBox="0 0 ${W} ${H}" role="img" aria-label="${esc(v.home.nick)} win probability over the course of the game">` +
+      `<defs><clipPath id="wp-clip-h"><rect x="0" y="0" width="${W}" height="${f1(yMid)}"/></clipPath>` +
+      `<clipPath id="wp-clip-a"><rect x="0" y="${f1(yMid)}" width="${W}" height="${f1(H - yMid)}"/></clipPath></defs>` +
+      grid + axis +
+      `<path class="wp-area wp-area--h" d="${area}" clip-path="url(#wp-clip-h)"/>` +
+      `<path class="wp-area wp-area--a" d="${area}" clip-path="url(#wp-clip-a)"/>` +
+      `<path class="wp-line" d="${line}"/>${dots}` +
+      `<line class="wp-cross" x1="0" y1="${PT}" x2="0" y2="${H - PB}" visibility="hidden"/>` +
+      `<circle class="wp-dot" cx="0" cy="0" r="5" visibility="hidden"/>` +
+      `<rect class="wp-hit" x="${PL}" y="${PT}" width="${W - PL - PR}" height="${H - PT - PB}"/></svg>`;
+
+    // numbers under the chart
+    const body = vals.length > 2 ? vals.slice(0, -1) : vals;   // the last point is the game ending (100% / 0%)
+    const peakHome = Math.max(...body), peakAway = 100 - Math.min(...body);
+    const deltas = [];
+    let flips = 0;
+    for (let k = 1; k < n; k++) {
+      deltas.push({ k, d: vals[k] - vals[k - 1] });
+      if ((vals[k - 1] - 50) * (vals[k] - 50) < 0) flips++;
+    }
+    const biggest = deltas.reduce((m, x) => (!m || Math.abs(x.d) > Math.abs(m.d) ? x : m), null);
+    const kpi = (val, label) => `<div class="gx-kpi"><div class="gx-kpi__v">${val}</div><div class="gx-kpi__l">${label}</div></div>`;
+    const kpis = `<div class="gx-kpis gx-kpis--4">` +
+      kpi(`${Math.round(peakHome)}%`, `${esc(v.home.nick)} peak`) +
+      kpi(`${Math.round(peakAway)}%`, `${esc(v.away.nick)} peak`) +
+      kpi(biggest ? `${Math.abs(biggest.d).toFixed(1)}%` : '\u2014', 'Biggest swing') +
+      kpi(String(flips), 'Favorite changed') +
+    `</div>`;
+
+    let moments = '';
+    if (aligned) {
+      const top = deltas.slice().sort((a, b) => Math.abs(b.d) - Math.abs(a.d)).slice(0, 5);
+      const items = top.map(({ k, d }) => {
+        const pl = playAt(k);
+        if (!pl) return '';
+        const team = d > 0 ? v.home : v.away;
+        return `<li class="gx-moment"><span class="gx-moment__delta gx-moment__delta--${team.side}">+${Math.abs(d).toFixed(1)}%</span>` +
+          `<div class="gx-moment__body"><div class="gx-moment__when">${teamLogoCardHtml(team.id)}` +
+            `<span>${esc(halfLabel(pl.t, pl.in))}</span><span class="gx-half__sub">${esc(team.nick)} gain</span></div>` +
+          `<div class="gx-moment__desc">${esc(pl.d || pl.ev || '')}</div></div></li>`;
+      }).join('');
+      if (items) moments = section('Biggest swings', `<ol class="gx-moments">${items}</ol>`);
+    }
+
+    root.innerHTML =
+      `<div class="gx-legend wp-legend">` +
+        `<span class="gx-legend__side"><i class="wp-sw wp-sw--h"></i>${teamLogoCardHtml(v.home.id)}<span>${esc(v.home.nick)} <em>(top)</em></span></span>` +
+        `<span class="gx-legend__side"><i class="wp-sw wp-sw--a"></i>${teamLogoCardHtml(v.away.id)}<span>${esc(v.away.nick)} <em>(bottom)</em></span></span>` +
+      `</div>` +
+      `<div class="wp-wrap">${svg}<div class="wp-tip" hidden></div></div>` +
+      `<p class="tab-note" style="margin-top:8px;">${aligned ? 'Dots mark scoring plays. ' : ''}Hover or drag across the chart for details.</p>` +
+      kpis + moments;
+
+    // hover / touch scrubbing
+    const svgEl = root.querySelector('.wp-svg');
+    const hit = root.querySelector('.wp-hit');
+    const tip = root.querySelector('.wp-tip');
+    const cross = root.querySelector('.wp-cross');
+    const dot = root.querySelector('.wp-dot');
+    if (!svgEl || !hit || !tip || !cross || !dot) return;
+
+    function hideTip() {
+      tip.hidden = true;
+      cross.setAttribute('visibility', 'hidden');
+      dot.setAttribute('visibility', 'hidden');
+    }
+    function showTip(ev) {
+      const rect = svgEl.getBoundingClientRect();
+      if (!rect.width) return;
+      const x = (ev.clientX - rect.left) * (W / rect.width);
+      const k = Math.max(0, Math.min(n - 1, Math.round(((x - PL) / (W - PL - PR)) * (n - 1))));
+      const px = xFor(k), py = yFor(vals[k]);
+      cross.setAttribute('x1', f1(px)); cross.setAttribute('x2', f1(px)); cross.setAttribute('visibility', 'visible');
+      dot.setAttribute('cx', f1(px)); dot.setAttribute('cy', f1(py)); dot.setAttribute('visibility', 'visible');
+
+      const pl = playAt(k);
+      const home = vals[k], away = 100 - vals[k];
+      tip.innerHTML =
+        (pl ? `<strong>${esc(halfLabel(pl.t, pl.in))}</strong>` : '') +
+        `<span class="wp-tip__row"><i class="wp-sw wp-sw--h"></i>${esc(v.home.nick)} ${home.toFixed(1)}%</span>` +
+        `<span class="wp-tip__row"><i class="wp-sw wp-sw--a"></i>${esc(v.away.nick)} ${away.toFixed(1)}%</span>` +
+        (pl && (pl.d || pl.ev) ? `<em>${esc(String(pl.d || pl.ev).slice(0, 140))}</em>` : '');
+      tip.hidden = false;
+      const wrapW = rect.width;
+      const left = (px / W) * wrapW - tip.offsetWidth / 2;
+      tip.style.left = `${Math.max(4, Math.min(left, wrapW - tip.offsetWidth - 4))}px`;
+    }
+    hit.addEventListener('pointermove', showTip);
+    hit.addEventListener('pointerdown', showTip);
+    hit.addEventListener('pointerleave', hideTip);
   }
 
   main();
