@@ -5006,7 +5006,8 @@ function runGamePage() {
   const byId = (id) => document.getElementById(id);
   const esc = escapeHtml;
 
-  const GAME_POLL_MS = 20000;
+  const GAME_POLL_MS = 8000;       // live games refresh this often (pitch by pitch feel)
+  const WP_EVERY = 4;              // win probability is a heavier request: re-read it every 4th refresh
   const TAB_KEYS = ['summary', 'box', 'stats', 'plays', 'winprob'];
 
   // UI state that has to survive the live repaints (tab, team toggle, play filters, opened pitch lists).
@@ -5257,6 +5258,7 @@ function runGamePage() {
           d: p.result.description || (p.about.isComplete === false ? 'At bat in progress' : (p.result.event || '')),
           ev: p.result.event,
           sc: !!p.about.isScoringPlay,
+          ok: p.about.isComplete !== false,
           pt, hd, ac,
         };
       });
@@ -5265,7 +5267,7 @@ function runGamePage() {
     const dt = gd.datetime || {};
     return {
       date: dt.dateTime || dt.officialDate || null,
-      live: state === 'live' ? { label: liveStateLabel(status.detailedState, ls) } : null,
+      live: state === 'live' ? { label: liveStateLabel(status.detailedState, ls), sit: liveSituation(feed) } : null,
       box: {
         a: teamBox('away'),
         h: teamBox('home'),
@@ -5291,11 +5293,14 @@ function runGamePage() {
       plays.length,
       last ? `${last.d || ''}|${Array.isArray(last.pt) ? last.pt.length : 0}` : '',
       (g.wp || []).length,
+      g.live && g.live.sit ? JSON.stringify(g.live.sit) : '',
     ].join('#');
   }
 
   async function showLive(gamePk, feed) {
-    const first = feedToGame(feed, await fetchWinProb(gamePk));
+    let wp = await fetchWinProb(gamePk);
+    let tick = 0;
+    const first = feedToGame(feed, wp);
     paintGame(first);
     let lastSig = sigOf(first);
     clearStatus(statusEl);
@@ -5309,7 +5314,9 @@ function runGamePage() {
         const next = await fetchLiveFeed(gamePk);
         if (!next) return;
         const state = feedState(next);
-        const g = feedToGame(next, await fetchWinProb(gamePk));
+        tick++;
+        if (state !== 'live' || tick % WP_EVERY === 0) wp = await fetchWinProb(gamePk);
+        const g = feedToGame(next, wp);
         const sig = sigOf(g);
         if (sig !== lastSig) { paintGame(g); lastSig = sig; }
         if (state !== 'live') clearInterval(timer); // the game ended: that was the final repaint
@@ -5376,6 +5383,444 @@ function runGamePage() {
   }
 
   // --------------------------------------------------------------------------
+  // Live view (only while a game is in progress)
+  // Mirrors the TV graphics: score bug with the bases / count / outs under the
+  // score, then a strike zone with every pitch of the at-bat (batter, catcher
+  // and pitcher named), a field showing where the ball went and who is on
+  // base, and a live play-by-play. Built from MLB's live feed by
+  // liveSituation(); drawn by renderLive() and sitBugHtml().
+  // --------------------------------------------------------------------------
+  const ZONE_HALF_W = 17 / 24;   // home plate is 17 in wide -> half-width in feet
+
+  function pickPerson(p, players) {
+    if (!p || p.id === undefined || p.id === null) return null;
+    const meta = (players && players['ID' + p.id]) || {};
+    const full = String(p.fullName || meta.fullName || '').trim();
+    const parts = full ? full.split(/\s+/) : [];
+    const last = String(meta.lastName || (parts.length ? parts[parts.length - 1] : '') || '').trim();
+    return {
+      id: p.id,
+      n: full || last || 'Player',
+      ln: last || full || 'Player',
+      bats: (meta.batSide && meta.batSide.code) || null,
+      throws: (meta.pitchHand && meta.pitchHand.code) || null,
+    };
+  }
+
+  /** Everything the live view needs, as plain data (also used as the repaint fingerprint). */
+  function liveSituation(feed) {
+    const gd = feed.gameData || {};
+    const ld = feed.liveData || {};
+    const ls = ld.linescore || {};
+    const off = ls.offense || {};
+    const def = ls.defense || {};
+    const players = gd.players || {};
+    const P = (p) => pickPerson(p, players);
+
+    const innState = String(ls.inningState || '');
+    const brk = /^(Middle|End)$/i.test(innState);          // between half-innings
+    const top = ls.isTopInning !== undefined ? !!ls.isTopInning : /^Top$/i.test(innState);
+
+    const cp = ld.plays && ld.plays.currentPlay ? ld.plays.currentPlay : null;
+    const ab = { live: false, batter: null, pitcher: null, pitches: [], zTop: null, zBot: null, result: null, hit: null, next: null };
+
+    if (cp && cp.matchup && cp.matchup.batter) {
+      const m = cp.matchup;
+      ab.live = !(cp.about && cp.about.isComplete === true);
+      ab.batter = P(m.batter);
+      ab.pitcher = P(m.pitcher);
+      if (ab.batter && m.batSide && m.batSide.code) ab.batter.bats = m.batSide.code;
+      if (ab.pitcher && m.pitchHand && m.pitchHand.code) ab.pitcher.throws = m.pitchHand.code;
+
+      const evs = Array.isArray(cp.playEvents) ? cp.playEvents : [];
+      const pitchEvs = evs.filter((e) => e && e.isPitch);
+      ab.pitches = pitchEvs.map((e, i) => {
+        const d = e.details || {};
+        const pd = e.pitchData || {};
+        const co = pd.coordinates || {};
+        const pn = numOrNull(e.pitchNumber);
+        return {
+          n: pn === null ? i + 1 : pn,
+          call: (d.call && d.call.description) || '',
+          type: (d.type && d.type.description) || '',
+          mph: numOrNull(pd.startSpeed),
+          x: numOrNull(co.pX),
+          z: numOrNull(co.pZ),
+          cls: d.isInPlay ? 'play' : (d.isStrike ? 'strike' : (d.isBall ? 'ball' : 'other')),
+          b: e.count ? numOrNull(e.count.balls) : null,
+          s: e.count ? numOrNull(e.count.strikes) : null,
+        };
+      });
+      for (const e of pitchEvs) {
+        const pd = e.pitchData || {};
+        const t = numOrNull(pd.strikeZoneTop), b = numOrNull(pd.strikeZoneBottom);
+        if (t !== null && b !== null) { ab.zTop = t; ab.zBot = b; }
+      }
+      const lastEv = pitchEvs.length ? pitchEvs[pitchEvs.length - 1] : null;
+      if (lastEv && lastEv.hitData) {
+        const hd = lastEv.hitData;
+        const co = hd.coordinates || {};
+        ab.hit = {
+          x: numOrNull(co.coordX), y: numOrNull(co.coordY),
+          mph: numOrNull(hd.launchSpeed), ang: numOrNull(hd.launchAngle), dist: numOrNull(hd.totalDistance),
+          traj: hd.trajectory ? String(hd.trajectory) : null,
+          inPlay: !!(lastEv.details && lastEv.details.isInPlay),
+        };
+      }
+      if (!ab.live && cp.result) ab.result = { ev: cp.result.event || '', d: cp.result.description || '' };
+      if (!ab.live) {
+        const nb = P(off.batter);
+        if (nb && (!ab.batter || String(nb.id) !== String(ab.batter.id))) ab.next = nb;
+      }
+    } else {
+      ab.live = true;                         // no pitch thrown yet: the batter is up, the zone is empty
+      ab.batter = P(off.batter);
+      ab.pitcher = P(def.pitcher);
+    }
+
+    return {
+      brk, top,
+      inn: numOrNull(ls.currentInning),
+      ord: ls.currentInningOrdinal || '',
+      state: innState,
+      balls: n0(ls.balls), strikes: n0(ls.strikes), outs: n0(ls.outs),
+      off: brk ? null : (top ? 'a' : 'h'),                    // batting side: 'a' away, 'h' home
+      runners: brk ? { 1: null, 2: null, 3: null } : { 1: P(off.first), 2: P(off.second), 3: P(off.third) },
+      field: { P: P(def.pitcher), C: P(def.catcher), '1B': P(def.first), '2B': P(def.second), '3B': P(def.third),
+               SS: P(def.shortstop), LF: P(def.left), CF: P(def.center), RF: P(def.right) },
+      onDeck: brk ? null : P(off.onDeck),
+      inHole: brk ? null : P(off.inHole),
+      ab,
+    };
+  }
+
+  const batsText = (c) => (c === 'L' ? 'Bats left' : (c === 'R' ? 'Bats right' : (c === 'S' ? 'Switch hitter' : '')));
+  const throwsText = (c) => (c === 'L' ? 'Throws left' : (c === 'R' ? 'Throws right' : ''));
+  /** Side of the plate a hitter stands on: 'L' | 'R' (a switch hitter takes the side opposite the pitcher's arm). */
+  function batSide(person, pitcher) {
+    const c = person && person.bats;
+    if (c === 'L' || c === 'R') return c;
+    if (c === 'S') return pitcher && pitcher.throws === 'R' ? 'L' : 'R';
+    return null;
+  }
+  const fmtMph = (n) => (n === null || n === undefined ? '' : `${Number(n).toFixed(1)} mph`);
+
+  // ---- score bug: bases, count and outs, drawn under the score in the hero card ----
+  function sitBugHtml(sit) {
+    if (!sit) return '';
+    const on = (k) => (sit.runners[k] ? ' is-on' : '');
+    const base = (k, cx, cy) =>
+      `<rect class="gb-base${on(k)}" x="${cx - 7}" y="${cy - 7}" width="14" height="14" transform="rotate(45 ${cx} ${cy})"/>`;
+    const names = [[1, 'first'], [2, 'second'], [3, 'third']]
+      .filter(([k]) => sit.runners[k]).map(([k, w]) => `${sit.runners[k].n} on ${w}`);
+    const aria = (sit.brk ? 'Between innings' : (names.length ? `Runners: ${names.join(', ')}` : 'Bases empty')) +
+      (sit.brk ? '' : `. Count ${sit.balls} balls, ${sit.strikes} strikes, ${sit.outs} out${sit.outs === 1 ? '' : 's'}.`);
+    const dots = [0, 1, 2].map((i) => `<span class="gx-out${i < sit.outs ? ' is-on' : ''}"></span>`).join('');
+    return `<div class="gx-sit" role="img" aria-label="${esc(aria)}">` +
+      `<svg class="gx-bases" viewBox="0 0 84 66" aria-hidden="true" focusable="false">` +
+        `<path class="gb-line" d="M42 58 L68 34 L42 10 L16 34 Z"/>` +
+        base(2, 42, 10) + base(3, 16, 34) + base(1, 68, 34) +
+        `<path class="gb-home" d="M36 58 L48 58 L48 62 L42 66 L36 62 Z"/>` +
+      `</svg>` +
+      (sit.brk ? '' :
+        `<div class="gx-sit__row"><span class="gx-sit__count">${sit.balls}&ndash;${sit.strikes}</span>` +
+        `<span class="gx-outs" title="${sit.outs} out${sit.outs === 1 ? '' : 's'}">${dots}</span></div>` +
+        `<div class="gx-sit__cap">Count &middot; ${sit.outs} out${sit.outs === 1 ? '' : 's'}</div>`) +
+      `</div>`;
+  }
+
+  // ---- header: who is batting / pitching / catching, who is on base ----
+  function personBlock(role, teamNick, person, handText, cls) {
+    const head = `<div class="lv-person__role">${esc(role)}${teamNick ? ` &middot; ${esc(teamNick)}` : ''}</div>`;
+    if (!person) return `<div class="lv-person ${cls} is-empty">${head}<div class="lv-person__name">&mdash;</div></div>`;
+    return `<div class="lv-person ${cls}">${head}` +
+      `<div class="lv-person__name">${playerLink(person.id, person.n)}</div>` +
+      (handText ? `<div class="lv-person__hand">${esc(handText)}</div>` : '') + `</div>`;
+  }
+
+  function liveHeadHtml(sit, v) {
+    const ab = sit.ab;
+    const offT = sit.off === 'a' ? v.away : (sit.off === 'h' ? v.home : null);
+    const defT = sit.off === 'a' ? v.home : (sit.off === 'h' ? v.away : null);
+    const isNow = ab.live && !sit.brk;
+    const tag = sit.brk ? 'Between innings' : (ab.live ? 'At bat' : 'Last play');
+    const chip = (label, person, extra) => (person
+      ? `<span class="lv-chip${extra ? ' ' + extra : ''}"><b>${esc(label)}</b> ${playerLink(person.id, person.n)}</span>` : '');
+    const side = batSide(ab.batter, ab.pitcher);
+    const batHand = ab.batter && ab.batter.bats === 'S' && side
+      ? `Switch hitter, batting ${side === 'L' ? 'left' : 'right'}` : batsText(ab.batter && ab.batter.bats);
+
+    const chips = [chip('Catcher', sit.field.C)];
+    if (ab.next) chips.push(chip('Up next', ab.next));
+    chips.push(chip('On deck', sit.onDeck), chip('In the hole', sit.inHole));
+
+    const runners = [[1, '1B'], [2, '2B'], [3, '3B']].filter(([k]) => sit.runners[k])
+      .map(([k, l]) => chip(l, sit.runners[k], 'lv-chip--run')).join('');
+    const baseLine = sit.brk ? '' : (runners || `<span class="lv-chip lv-chip--none">Bases empty</span>`);
+
+    return `<div class="lv-head">` +
+      `<div class="lv-tag${ab.live && !sit.brk ? ' is-live' : ''}">${esc(tag)}${sit.brk ? ` &middot; ${esc(sit.state)} of the ${esc(sit.ord)}` : ''}</div>` +
+      `<div class="lv-matchup">` +
+        personBlock(isNow ? 'Batting' : 'Last batter', offT && offT.nick, ab.batter, batHand, 'lv-person--bat') +
+        `<div class="lv-vs">vs</div>` +
+        personBlock(isNow ? 'Pitching' : 'Pitcher', defT && defT.nick, ab.pitcher, throwsText(ab.pitcher && ab.pitcher.throws), 'lv-person--pit') +
+      `</div>` +
+      `<div class="lv-chips">${chips.join('')}</div>` +
+      (baseLine ? `<div class="lv-chips">${baseLine}</div>` : '') +
+    `</div>`;
+  }
+
+  // ---- strike zone ----
+  // Drawn from the pitcher's side (like the TV camera): the catcher is behind the plate, a right-handed batter
+  // stands on the right of the picture, a left-handed one on the left. MLB gives pitch locations from the
+  // catcher's view (pX > 0 = catcher's right), so x is mirrored here.
+  function zoneCardHtml(sit) {
+    const ab = sit.ab;
+    const W = 460, H = 420, S = 58, CX = 230, GY = 372;
+    const X = (px) => CX - px * S;
+    const Y = (z) => GY - z * S;
+    const clamp = (n, lo, hi) => Math.min(hi, Math.max(lo, n));
+    const f = (n) => n.toFixed(1);
+    const zt = ab.zTop !== null ? ab.zTop : 3.5;
+    const zb = ab.zBot !== null ? ab.zBot : 1.5;
+    const x0 = X(ZONE_HALF_W), x1 = X(-ZONE_HALF_W), y0 = Y(zt), y1 = Y(zb);
+    const cw = (x1 - x0) / 3, ch = (y1 - y0) / 3;
+
+    const catcher =
+      `<g class="lv-fig lv-fig--c" transform="translate(${CX} ${GY})">` +
+        `<line class="lv-limb" x1="-42" y1="0" x2="-34" y2="-62" stroke-width="22"/>` +
+        `<line class="lv-limb" x1="42" y1="0" x2="34" y2="-62" stroke-width="22"/>` +
+        `<line class="lv-limb" x1="-34" y1="-62" x2="-16" y2="-112" stroke-width="26"/>` +
+        `<line class="lv-limb" x1="34" y1="-62" x2="16" y2="-112" stroke-width="26"/>` +
+        `<line class="lv-limb" x1="0" y1="-112" x2="0" y2="-190" stroke-width="58"/>` +
+        `<circle cx="0" cy="-222" r="19"/>` +
+        `<path class="lv-helmet" d="M-21 -224 A21 21 0 0 1 21 -224 Z"/>` +
+        `<circle class="lv-mitt" cx="28" cy="-150" r="22"/>` +
+      `</g>`;
+
+    const side = batSide(ab.batter, ab.pitcher);
+    let batter = '', batterName = '';
+    if (side) {
+      const bx = side === 'L' ? W - 330 : 330;
+      const flip = side === 'L' ? ' scale(-1,1)' : '';
+      batter =
+        `<g class="lv-fig lv-fig--b" transform="translate(${bx} ${GY})${flip}">` +
+          `<line class="lv-limb" x1="-34" y1="0" x2="-4" y2="-168" stroke-width="17"/>` +
+          `<line class="lv-limb" x1="30" y1="0" x2="6" y2="-168" stroke-width="17"/>` +
+          `<line class="lv-limb" x1="0" y1="-168" x2="-6" y2="-285" stroke-width="36"/>` +
+          `<line class="lv-limb" x1="-6" y1="-268" x2="30" y2="-300" stroke-width="11"/>` +
+          `<line class="lv-limb" x1="6" y1="-268" x2="32" y2="-292" stroke-width="11"/>` +
+          `<line class="lv-bat" x1="28" y1="-296" x2="96" y2="-352" stroke-width="7"/>` +
+          `<circle cx="-12" cy="-318" r="15"/>` +
+          `<path class="lv-helmet" d="M-30 -320 A18 18 0 0 1 6 -320 L10 -314 L-30 -314 Z"/>` +
+        `</g>`;
+      batterName = `<text class="lv-tag-txt" x="${bx}" y="${GY + 34}" text-anchor="middle">${esc(ab.batter.ln)} (${side})</text>`;
+    }
+
+    const plate = `<path class="lv-plate" d="M${f(CX - 41)} ${GY + 10} L${f(CX + 41)} ${GY + 10} L${f(CX + 41)} ${GY} L${CX} ${GY - 14} L${f(CX - 41)} ${GY} Z"/>`;
+    const catcherName = sit.field.C
+      ? `<text class="lv-tag-txt" x="${CX}" y="${GY + 34}" text-anchor="middle">C ${esc(sit.field.C.ln)}</text>` : '';
+
+    const zone =
+      `<rect class="lv-zone" x="${f(x0)}" y="${f(y0)}" width="${f(x1 - x0)}" height="${f(y1 - y0)}"/>` +
+      [1, 2].map((i) => `<line class="lv-zone__grid" x1="${f(x0 + cw * i)}" y1="${f(y0)}" x2="${f(x0 + cw * i)}" y2="${f(y1)}"/>`).join('') +
+      [1, 2].map((i) => `<line class="lv-zone__grid" x1="${f(x0)}" y1="${f(y0 + ch * i)}" x2="${f(x1)}" y2="${f(y0 + ch * i)}"/>`).join('');
+
+    const shown = ab.pitches.filter((p) => p.x !== null && p.z !== null);
+    const lastN = ab.pitches.length ? ab.pitches[ab.pitches.length - 1].n : null;
+    const dots = shown.map((p) => {
+      const cx = clamp(X(p.x), 16, W - 16), cy = clamp(Y(p.z), 16, GY + 8);
+      const isLast = p.n === lastN;
+      return `<g class="lv-pt lv-pt--${p.cls}${isLast ? ' is-last' : ''}">` +
+        (isLast ? `<circle class="lv-pt__ring" cx="${f(cx)}" cy="${f(cy)}" r="16"/>` : '') +
+        `<circle cx="${f(cx)}" cy="${f(cy)}" r="10"/>` +
+        `<text x="${f(cx)}" y="${f(cy + 4)}" text-anchor="middle">${p.n}</text></g>`;
+    }).join('');
+
+    const aria = `Strike zone from the pitcher's side with ${shown.length} pitch${shown.length === 1 ? '' : 'es'} plotted.`;
+    const svg = `<svg class="lv-zone-svg" viewBox="0 0 ${W} ${H}" role="img" aria-label="${esc(aria)}">` +
+      catcher + batter + plate + zone + dots + catcherName + batterName + `</svg>`;
+
+    const lp = ab.pitches.length ? ab.pitches[ab.pitches.length - 1] : null;
+    const last = lp
+      ? `<div class="lv-last"><span class="lv-last__t">${esc(lp.type || 'Pitch')}</span>` +
+        (lp.mph !== null ? `<span class="lv-last__mph">${esc(fmtMph(lp.mph))}</span>` : '') +
+        `<span class="lv-last__call">${esc(lp.call)}</span></div>`
+      : `<div class="lv-last lv-last--none">${ab.live ? 'Waiting for the first pitch' : 'No pitches tracked'}</div>`;
+
+    const rows = ab.pitches.map((p) =>
+      `<tr class="lv-pc--${p.cls}"><td class="num">${p.n}</td><td>${esc(p.type || '\u2014')}</td>` +
+      `<td class="num">${p.mph !== null ? esc(Number(p.mph).toFixed(1)) : '\u2014'}</td><td>${esc(p.call || '\u2014')}</td>` +
+      `<td class="num">${p.b !== null && p.s !== null ? `${p.b}\u2013${p.s}` : ''}</td></tr>`).join('');
+    const table = rows
+      ? `<div class="table-scroll"><table class="lv-pt-table"><thead><tr><th>#</th><th>Pitch</th><th>mph</th><th>Result</th><th>Count</th></tr></thead><tbody>${rows}</tbody></table></div>` : '';
+
+    const legend = `<div class="lv-legend"><span><i class="lv-key lv-key--ball"></i>Ball</span>` +
+      `<span><i class="lv-key lv-key--strike"></i>Strike / foul</span><span><i class="lv-key lv-key--play"></i>In play</span>` +
+      `<span class="lv-legend__view">Pitcher&rsquo;s view</span></div>`;
+
+    return `<div class="lv-card"><h3 class="lv-card__title">Strike zone</h3>${svg}${legend}${last}${table}</div>`;
+  }
+
+  // ---- field ----
+  const FIELD_SPOTS = { P: [0, 60.5], '1B': [70, 92], '2B': [46, 138], SS: [-46, 138], '3B': [-70, 92],
+    LF: [-135, 262], CF: [0, 300], RF: [135, 262] };
+  const BASE_SPOTS = { 1: [63.64, 63.64], 2: [0, 127.28], 3: [-63.64, 63.64] };
+
+  function hitKind(ab) {
+    const h = ab.hit;
+    if (!h) return null;
+    if (h.inPlay) {
+      if (ab.live) return 'pending';                       // just hit, result not decided yet
+      const ev = (ab.result && ab.result.ev) || '';
+      if (/home run/i.test(ev)) return 'hr';
+      if (/^(single|double|triple)/i.test(ev)) return 'hit';
+      if (/error/i.test(ev)) return 'err';
+      return 'out';
+    }
+    return 'foul';
+  }
+
+  function fieldCardHtml(sit, v) {
+    const ab = sit.ab;
+    const FY = (y) => 410 - y;
+    const f = (n) => n.toFixed(1);
+    const rad = (d) => (d * Math.PI) / 180;
+    const fence = (deg) => 400 - 70 * Math.pow(Math.abs(deg) / 45, 1.6);   // generic outfield wall: 330 down the lines, 400 to center
+    const pts = [];
+    for (let d = -45; d <= 45; d += 3) pts.push([fence(d) * Math.sin(rad(d)), fence(d) * Math.cos(rad(d))]);
+    const pt = (x, y) => `${f(x)} ${f(FY(y))}`;
+    const fair = `M ${pt(0, 0)} ` + pts.map((p) => `L ${pt(p[0], p[1])}`).join(' ') + ' Z';
+    const wall = 'M ' + pts.map((p) => pt(p[0], p[1])).join(' L ');
+
+    const bases = [1, 2, 3].map((k) => {
+      const [bx, by] = BASE_SPOTS[k];
+      const d = 8;
+      return `<path class="lv-base${sit.runners[k] ? ' is-on' : ''}" d="M ${pt(bx, by + d)} L ${pt(bx + d, by)} L ${pt(bx, by - d)} L ${pt(bx - d, by)} Z"/>`;
+    }).join('');
+
+    // runners: a dot on the base with the name beside it
+    const runnerSvg = [1, 2, 3].map((k) => {
+      const r = sit.runners[k];
+      if (!r) return '';
+      const [bx, by] = BASE_SPOTS[k];
+      let tx = bx, ty = by, anchor = 'middle';
+      if (k === 1) { tx = bx + 15; ty = by - 5; anchor = 'start'; }
+      if (k === 3) { tx = bx - 15; ty = by - 5; anchor = 'end'; }
+      if (k === 2) { ty = by - 22; }
+      return `<g class="lv-run"><circle cx="${f(bx)}" cy="${f(FY(by))}" r="7"/>` +
+        `<text x="${f(tx)}" y="${f(FY(ty) + 5)}" text-anchor="${anchor}">${esc(r.ln)}</text></g>`;
+    }).join('');
+
+    const fielders = Object.keys(FIELD_SPOTS).map((k) => {
+      const p = sit.field[k];
+      if (!p) return '';
+      const [x, y] = FIELD_SPOTS[k];
+      return `<g class="lv-fld"><circle cx="${f(x)}" cy="${f(FY(y))}" r="6"/>` +
+        `<text x="${f(x)}" y="${f(FY(y) - 11)}" text-anchor="middle">${esc(p.ln)}</text></g>`;
+    }).join('');
+    const catcherSvg = sit.field.C
+      ? `<g class="lv-fld lv-fld--c"><circle cx="0" cy="${f(FY(-10))}" r="6"/>` +
+        `<text x="0" y="${f(FY(-10) + 21)}" text-anchor="middle">${esc(sit.field.C.ln)}</text></g>` : '';
+
+    // batter at the plate (right-handed on the third-base side = left of the picture)
+    let batterSvg = '';
+    const bPerson = ab.live ? ab.batter : (ab.next || ab.batter);
+    const bSide = batSide(bPerson, ab.pitcher);
+    if (!sit.brk && bPerson && bSide) {
+      const bx = bSide === 'L' ? 16 : -16;
+      batterSvg = `<g class="lv-bat-dot"><circle cx="${bx}" cy="${f(FY(0))}" r="6"/>` +
+        `<text x="${bx + (bSide === 'L' ? 11 : -11)}" y="${f(FY(0) + 5)}" text-anchor="${bSide === 'L' ? 'start' : 'end'}">${esc(bPerson.ln)}</text></g>`;
+    }
+
+    // where the ball went (MLB's hit coordinates -> feet from home plate)
+    let hitSvg = '', hitKindNow = hitKind(ab);
+    if (ab.hit && ab.hit.x !== null && ab.hit.y !== null && hitKindNow) {
+      const hx = Math.max(-255, Math.min(255, 2.495 * (ab.hit.x - 125.42)));
+      const hy = Math.max(-40, Math.min(425, 2.495 * (198.27 - ab.hit.y)));
+      const label = hitKindNow === 'foul' ? 'Foul ball' : (ab.result && ab.result.ev ? ab.result.ev : 'In play');
+      const anchor = hx > 120 ? 'end' : 'start';
+      const lx = hx + (anchor === 'end' ? -12 : 12);
+      const mark = hitKindNow === 'hr'
+        ? `<path d="M ${f(hx)} ${f(FY(hy) - 11)} L ${f(hx + 3.2)} ${f(FY(hy) - 3.5)} L ${f(hx + 10.5)} ${f(FY(hy) - 3.5)} L ${f(hx + 4.5)} ${f(FY(hy) + 1.5)} L ${f(hx + 6.5)} ${f(FY(hy) + 9)} L ${f(hx)} ${f(FY(hy) + 4.5)} L ${f(hx - 6.5)} ${f(FY(hy) + 9)} L ${f(hx - 4.5)} ${f(FY(hy) + 1.5)} L ${f(hx - 10.5)} ${f(FY(hy) - 3.5)} L ${f(hx - 3.2)} ${f(FY(hy) - 3.5)} Z"/>`
+        : `<circle cx="${f(hx)}" cy="${f(FY(hy))}" r="7"/>`;
+      hitSvg = `<g class="lv-hit lv-hit--${hitKindNow}"><line x1="0" y1="${f(FY(0))}" x2="${f(hx)}" y2="${f(FY(hy))}"/>${mark}` +
+        `<text x="${f(lx)}" y="${f(FY(hy) + 5)}" text-anchor="${anchor}">${esc(label)}</text></g>`;
+    }
+
+    const svg = `<svg class="lv-field-svg" viewBox="-265 -20 530 490" role="img" aria-label="Baseball field with the fielders, the runners on base and where the ball went.">` +
+      `<defs><clipPath id="lv-fair"><path d="${fair}"/></clipPath></defs>` +
+      `<path class="lv-grass" d="${fair}"/>` +
+      `<circle class="lv-dirt" cx="0" cy="${f(FY(60.5))}" r="95" clip-path="url(#lv-fair)"/>` +
+      `<path class="lv-infield" d="M ${pt(0, 24)} L ${pt(51, 63.64)} L ${pt(0, 103)} L ${pt(-51, 63.64)} Z"/>` +
+      `<path class="lv-wall" d="${wall}"/>` +
+      `<line class="lv-chalk" x1="0" y1="${f(FY(0))}" x2="${f(pts[pts.length - 1][0])}" y2="${f(FY(pts[pts.length - 1][1]))}"/>` +
+      `<line class="lv-chalk" x1="0" y1="${f(FY(0))}" x2="${f(pts[0][0])}" y2="${f(FY(pts[0][1]))}"/>` +
+      bases +
+      `<path class="lv-plate-f" d="M ${pt(-5, 0)} L ${pt(5, 0)} L ${pt(5, -4)} L ${pt(0, -8)} L ${pt(-5, -4)} Z"/>` +
+      `<circle class="lv-mound" cx="0" cy="${f(FY(60.5))}" r="8"/>` +
+      fielders + catcherSvg + batterSvg + hitSvg + runnerSvg + `</svg>`;
+
+    // text readout under the field
+    const lines = [];
+    const h = ab.hit;
+    if (!ab.live && ab.result && ab.result.ev) lines.push(`<strong>${esc(ab.result.ev)}</strong>`);
+    if (h && hitKindNow === 'foul') {
+      lines.push('Foul ball');
+    } else if (h && hitKindNow) {
+      const bits = [];
+      if (h.traj) bits.push(prettyKey(h.traj));
+      if (h.mph !== null) bits.push(`${Number(h.mph).toFixed(1)} mph off the bat`);
+      if (h.ang !== null) bits.push(`${Math.round(h.ang)}\u00b0 launch angle`);
+      if (h.dist !== null && h.dist > 0) bits.push(`${Math.round(h.dist)} ft`);
+      lines.push(esc(bits.length ? bits.join(' \u00b7 ') : 'Ball in play'));
+    }
+    const read = lines.length
+      ? `<div class="lv-readout">${lines.join('<br>')}</div>`
+      : `<div class="lv-readout lv-readout--none">${ab.live ? 'No ball in play on this at-bat yet' : 'No ball in play'}</div>`;
+
+    const legend = `<div class="lv-legend"><span><i class="lv-key lv-key--hit"></i>Hit</span><span><i class="lv-key lv-key--out"></i>Out</span>` +
+      `<span><i class="lv-key lv-key--hr"></i>Home run</span><span><i class="lv-key lv-key--foul"></i>Foul</span></div>`;
+
+    return `<div class="lv-card"><h3 class="lv-card__title">Field</h3>${svg}${legend}${read}` +
+      `<p class="lv-note">Fielders are drawn at standard positions; MLB doesn&rsquo;t publish live shifts.</p></div>`;
+  }
+
+  // ---- live play-by-play: the current at-bat pitch by pitch, then finished plays, newest first ----
+  function feedCardHtml(sit, v) {
+    const ab = sit.ab;
+    const items = [];
+    if (ab.live) {
+      for (let i = ab.pitches.length - 1; i >= 0; i--) {
+        const p = ab.pitches[i];
+        const bits = [`Pitch ${p.n}`];
+        if (p.type) bits.push(p.type);
+        if (p.mph !== null) bits.push(fmtMph(p.mph));
+        items.push(`<li class="lv-ev lv-ev--pitch lv-pc--${p.cls}"><span class="lv-ev__when">${p.b !== null && p.s !== null ? `${p.b}\u2013${p.s}` : ''}</span>` +
+          `<span class="lv-ev__txt">${esc(bits.join(' \u00b7 '))} &mdash; <b>${esc(p.call || 'Pitch')}</b></span></li>`);
+      }
+    }
+    const done = v.plays.filter((p) => p.ok !== false).slice(-14).reverse();
+    for (const p of done) {
+      items.push(`<li class="lv-ev${p.sc ? ' is-scoring' : ''}"><span class="lv-ev__when">${p.t === 0 ? '\u25b2' : '\u25bc'} ${esc(p.in)}</span>` +
+        `<span class="lv-ev__txt">${esc(p.d || p.ev || '')}</span></li>`);
+    }
+    const body = items.length ? `<ul class="lv-feed">${items.join('')}</ul>` : emptyMsg('Waiting for the first play.');
+    return `<div class="lv-card lv-card--feed"><h3 class="lv-card__title">Live play-by-play</h3>${body}` +
+      `<p class="lv-note">Updates automatically. The Plays tab has the full game log.</p></div>`;
+  }
+
+  function renderLive(game, v) {
+    const panel = byId('live-panel');
+    const sit = v.live && game.live ? game.live.sit : null;
+    if (!sit) { panel.hidden = true; panel.innerHTML = ''; return; }
+    panel.innerHTML = liveHeadHtml(sit, v) +
+      `<div class="lv-grid">${zoneCardHtml(sit)}${fieldCardHtml(sit, v)}</div>` +
+      feedCardHtml(sit, v);
+    panel.hidden = false;
+  }
+
+  // --------------------------------------------------------------------------
   // Paint everything
   // --------------------------------------------------------------------------
   function paintGame(game) {
@@ -5384,6 +5829,7 @@ function runGamePage() {
     view = v;
     initTabs();
     safe('hero', () => renderHero(game, v));
+    safe('live-panel', () => renderLive(game, v));
     safe('g-summary', () => { byId('g-summary').innerHTML = renderSummary(game, v); });
     safe('g-box', renderBox);
     safe('g-stats', () => { byId('g-stats').innerHTML = renderStats(v); });
@@ -5486,10 +5932,13 @@ function runGamePage() {
       `<div class="gh-state">${state}</div>` +
       `<div class="mu-top">` +
         heroTeamHtml(v.away) +
-        `<div class="mu-score" aria-hidden="true">` +
-          `<span class="gh-num ${cls('a')}">${shown(v.runs.a)}</span>` +
-          `<span class="mu-dash">&ndash;</span>` +
-          `<span class="gh-num ${cls('h')}">${shown(v.runs.h)}</span>` +
+        `<div class="mu-mid">` +
+          `<div class="mu-score" aria-hidden="true">` +
+            `<span class="gh-num ${cls('a')}">${shown(v.runs.a)}</span>` +
+            `<span class="mu-dash">&ndash;</span>` +
+            `<span class="gh-num ${cls('h')}">${shown(v.runs.h)}</span>` +
+          `</div>` +
+          (v.live && game.live ? sitBugHtml(game.live.sit) : '') +
         `</div>` +
         heroTeamHtml(v.home) +
       `</div>`;
