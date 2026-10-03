@@ -109,6 +109,13 @@ function fmtDate(isoDate) {
   return d.toLocaleDateString('en-US', { year: 'numeric', month: 'long', day: 'numeric' });
 }
 
+/** First-pitch time for a scheduled (not yet started) game, in the viewer's local time. */
+function fmtGameTime(isoDate) {
+  const d = new Date(isoDate);
+  if (Number.isNaN(d.getTime())) return '—';
+  return d.toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' });
+}
+
 function fmtOrDash(v) {
   return v === null || v === undefined || v === '' ? '—' : v;
 }
@@ -597,6 +604,52 @@ async function fetchLiveGames() {
   return out;
 }
 
+/**
+ * Every one of today's games that isn't finished yet (regular season + postseason;
+ * never spring training / exhibition / all-star): live ones (with score + inning)
+ * and ones that haven't started yet (with their scheduled first-pitch time). Used
+ * by the index page's pinned "Today's games" box. Throws on a network / HTTP
+ * problem so callers can keep whatever they were already showing.
+ * -> [{ gamePk, season, gameType, awayTeamId, homeTeamId, awayScore, homeScore,
+ *       state: 'live'|'preview'|'final', label, gameDate }]
+ */
+async function fetchTodaysGames() {
+  const today = new Date().toISOString().slice(0, 10);
+  const fields = 'dates,games,gamePk,season,gameDate,gameType,status,abstractGameState,detailedState,' +
+    'teams,away,home,team,id,score,linescore,currentInning,currentInningOrdinal,inningState';
+  const url = `https://statsapi.mlb.com/api/v1/schedule?sportId=1&date=${today}&hydrate=linescore&fields=${fields}`;
+  const res = await fetch(url);
+  if (!res.ok) throw new Error(`${res.status} fetching today's MLB games`);
+  const data = await res.json();
+
+  const out = [];
+  for (const d of (data && data.dates) || []) {
+    for (const g of d.games || []) {
+      if (g.gameType && NON_REGULAR_GAME_TYPES.has(g.gameType)) continue;
+      const away = g.teams && g.teams.away, home = g.teams && g.teams.home;
+      if (!away || !home || !away.team || !home.team) continue;
+      const st = g.status || {};
+      const abstract = st.abstractGameState;
+      const state = abstract === 'Live' ? 'live' : (abstract === 'Final' ? 'final' : 'preview');
+      const ls = g.linescore || {};
+      const season = Number(g.season) || new Date(g.gameDate).getUTCFullYear() || new Date().getFullYear();
+      out.push({
+        gamePk: g.gamePk,
+        season,
+        gameType: g.gameType,
+        awayTeamId: away.team.id,
+        homeTeamId: home.team.id,
+        awayScore: Number(away.score) || 0,
+        homeScore: Number(home.score) || 0,
+        state,
+        label: state === 'live' ? liveStateLabel(st.detailedState, ls) : null,
+        gameDate: g.gameDate,
+      });
+    }
+  }
+  return out;
+}
+
 /** Map<teamId(string), { gamePk, season, date, outcome:'LIVE', us, them, oppId, home, label }> */
 function liveByTeam(list) {
   const m = new Map();
@@ -795,13 +848,19 @@ function sortStandingsTeams(teams, sort) {
   });
 }
 
-function standingsHeaderHtml(key, sort) {
+/**
+ * `group` (optional) is the data-sort button's data-group attribute: which
+ * table this header belongs to, so a click handler can tell which one to
+ * re-sort without touching any other table on the page (see standingsTableHtml).
+ */
+function standingsHeaderHtml(key, sort, group) {
   if (key === 'last5') return '<th class="l5-col">Last 5</th>';
   const active = sort.key === key;
   const ariaSort = active ? (sort.dir === 'asc' ? 'ascending' : 'descending') : 'none';
   const arrow = active ? `<span class="sort-arrow" aria-hidden="true">${sort.dir === 'asc' ? '\u25B2' : '\u25BC'}</span>` : '';
+  const groupAttr = group ? ` data-group="${escapeHtml(group)}"` : '';
   return `<th class="sortable" aria-sort="${ariaSort}">` +
-    `<button type="button" class="sort-btn" data-sort="${key}" title="Sort by ${STANDINGS_TITLES[key]}">` +
+    `<button type="button" class="sort-btn" data-sort="${key}"${groupAttr} title="Sort by ${STANDINGS_TITLES[key]}">` +
     `${STANDINGS_LABELS[key]}${arrow}</button></th>`;
 }
 
@@ -817,12 +876,20 @@ function standingsHeaderHtml(key, sort) {
  *   (Last 5, W, L, PL, Pct, GB) instead of (PL, W, L, Pct, GB, Last 5).
  * opts.last5 = { status, byTeam, names } feeds the Last 5 column.
  * opts.spots = computePlayoffSpots(...) adds a soft yellow dot before playoff teams.
+ * opts.flat = true skips the East/Central/West grouping and renders every team
+ *   passed in as one single table (used by AL.html / NL.html's whole-league view).
+ * opts.leagueId, together with each division's name (or 'All' when opts.flat),
+ *   forms that table's sort "group" key (e.g. "103:East"). opts.sortByGroup, a
+ *   Map<groupKey, {key,dir}>, gives each table its OWN current sort, so clicking
+ *   a column header in one division/table never reorders any other one on the
+ *   page - a table with no entry in that map (or no map at all) falls back to
+ *   opts.sort (or the overall default, best win % on top).
  * Without opts.extended the table is the plain Team / W / L / Pct / GB layout
  * (standings.html relies on that).
  */
 function standingsTableHtml(teams, year, opts = {}) {
   const extended = !!opts.extended;
-  const sort = opts.sort || STANDINGS_DEFAULT_SORT;
+  const fallbackSort = opts.sort || STANDINGS_DEFAULT_SORT;
   const columns = !extended ? STANDINGS_PLAIN_COLUMNS
     : (opts.vertical ? STANDINGS_VERTICAL_COLUMNS : STANDINGS_WIDE_COLUMNS);
 
@@ -847,17 +914,24 @@ function standingsTableHtml(teams, year, opts = {}) {
     }
   };
 
-  const groups = new Map([['East', []], ['Central', []], ['West', []], ['Other', []]]);
-  for (const t of teams) {
-    groups.get(divisionFor(t.id, year) || 'Other').push(t);
+  let groups;
+  if (opts.flat) {
+    groups = new Map([['All', teams]]);
+  } else {
+    groups = new Map([['East', []], ['Central', []], ['West', []], ['Other', []]]);
+    for (const t of teams) {
+      groups.get(divisionFor(t.id, year) || 'Other').push(t);
+    }
   }
 
   let html = '';
   for (const [division, rows] of groups) {
     if (rows.length === 0) continue;
-    html += `<div class="division-label">${division}</div>`;
+    const groupKey = `${opts.leagueId ?? 'x'}:${division}`;
+    const sort = (opts.sortByGroup && opts.sortByGroup.get(groupKey)) || fallbackSort;
+    if (!opts.flat) html += `<div class="division-label">${division}</div>`;
     html += `<div class="table-scroll"><table class="ledger${extended ? ' ledger--standings' : ''}"><thead><tr>` +
-      `<th class="left">Team</th>${columns.map(k => standingsHeaderHtml(k, sort)).join('')}` +
+      `<th class="left">Team</th>${columns.map(k => standingsHeaderHtml(k, sort, groupKey)).join('')}` +
       `</tr></thead><tbody>`;
     for (const t of sortStandingsTeams(rows, sort)) {
       const teamCell = teamLinkHtml(t.id, t.n || `Team ${t.id}`);
@@ -881,6 +955,7 @@ function runIndexPage() {
   // used explicitly by us, so standings are grouped by league only, not division,
   // rather than guessing a division-id-to-name mapping.
   const LEAGUE_NAMES = { 103: 'American League', 104: 'National League' };
+  const LEAGUE_PAGES = { 103: 'AL.html', 104: 'NL.html' };
 
   async function main() {
     const manifest = await loadManifest().catch((err) => {
@@ -891,8 +966,85 @@ function runIndexPage() {
     });
     if (!manifest) return;
 
+    loadTodaysGames(manifest);
     loadStandings(manifest);
     loadRecentTransactions(manifest);
+  }
+
+  // --------------------------------------------------------------------------
+  // Today's games (pinned)
+  // Live games (score + inning) and today's remaining scheduled games (start
+  // time only, no score yet) - finished games aren't shown here, that's what
+  // the standings' Last 5 column is for. Polled every LIVE_POLL_MS so a
+  // scheduled game flips to live, and a live one updates its score, without a
+  // page refresh.
+  // --------------------------------------------------------------------------
+  async function loadTodaysGames(manifest) {
+    const statusEl = document.getElementById('today-status');
+    const wrap = document.getElementById('today-wrap');
+    setStatus(statusEl, "Loading today's games…");
+
+    const resolveTeamName = createTeamNameResolver(manifest);
+
+    function sortGames(games) {
+      return [...games].sort((a, b) => {
+        if ((a.state === 'live') !== (b.state === 'live')) return a.state === 'live' ? -1 : 1;
+        return new Date(a.gameDate) - new Date(b.gameDate);
+      });
+    }
+
+    async function render(games) {
+      if (games.length === 0) {
+        wrap.hidden = true;
+        setStatus(statusEl, 'No games today.');
+        return;
+      }
+      const rows = [];
+      for (const g of games) {
+        const [awayName, homeName] = await Promise.all([
+          resolveTeamName(g.awayTeamId),
+          resolveTeamName(g.homeTeamId),
+        ]);
+        const live = g.state === 'live';
+        const when = live
+          ? `<span class="live-dot" aria-hidden="true"></span> LIVE · ${escapeHtml(g.label || 'In progress')}`
+          : fmtGameTime(g.gameDate);
+        const scoreCell = live
+          ? `<a class="gm-score gm--live" href="${gameHref(g)}">${g.awayScore}&ndash;${g.homeScore}</a>`
+          : `<span class="gm-score gm-score--pending">&ndash;</span>`;
+        rows.push(`<div class="gm">
+          <div class="gm-when">${when}</div>
+          <div class="gm-main">
+            <div class="gm-team gm-team--away">${teamLinkHtml(g.awayTeamId, awayName)}</div>
+            ${scoreCell}
+            <div class="gm-team gm-team--home">${teamLinkHtml(g.homeTeamId, homeName)}</div>
+          </div>
+        </div>`);
+      }
+      wrap.innerHTML = `<div class="gm-list">${rows.join('')}</div>`;
+      clearStatus(statusEl);
+      wrap.hidden = false;
+    }
+
+    let current;
+    try {
+      current = sortGames((await fetchTodaysGames()).filter(g => g.state !== 'final'));
+    } catch (err) {
+      setStatus(statusEl, `Couldn't load today's games (${err.message}).`, true);
+      return;
+    }
+    await render(current);
+
+    let busy = false;
+    setInterval(async () => {
+      if (busy || document.hidden) return;
+      busy = true;
+      try {
+        current = sortGames((await fetchTodaysGames()).filter(g => g.state !== 'final'));
+        await render(current);
+      } catch (_) { /* a failed refresh keeps what is already on screen */ }
+      finally { busy = false; }
+    }, LIVE_POLL_MS);
   }
 
   // --------------------------------------------------------------------------
@@ -927,7 +1079,9 @@ function runIndexPage() {
 
     // rank + playoff spots are worked out once from the full season list (both leagues)
     const spots = computePlayoffSpots(result.data.teams, result.year);
-    let sortState = STANDINGS_DEFAULT_SORT;
+    // Each division's own sort ("103:East", "104:West", ...) - see standingsTableHtml -
+    // so clicking a column header in one division only ever re-sorts that division.
+    const sortByGroup = new Map();
 
     const verticalMql = window.matchMedia(VERTICAL_SCREEN_QUERY);
     let currentLast5 = { status: 'pending' };
@@ -939,18 +1093,26 @@ function runIndexPage() {
         html += `<p class="l5-note">Last 5 results couldn't be loaded for ${result.year}.</p>`;
       }
       for (const [lg, teams] of byLeague) {
+        const page = LEAGUE_PAGES[lg];
+        const name = LEAGUE_NAMES[lg] || `League ${lg}`;
+        const heading = page
+          ? `<a class="league-heading-link" href="${page}">${leagueLogoCardHtml(lg)}<span>${name}</span></a>`
+          : `${leagueLogoCardHtml(lg)}<span>${name}</span>`;
         html += `<h3 class="league-heading" style="font-family:var(--font-body);font-size:0.92rem;font-weight:600;
-          color:var(--text-secondary);margin:18px 0 8px;">${leagueLogoCardHtml(lg)}<span>${LEAGUE_NAMES[lg] || `League ${lg}`}</span></h3>`;
-        html += standingsTableHtml(teams, result.year, { extended: true, last5, vertical: verticalMql.matches, spots, sort: sortState });
+          color:var(--text-secondary);margin:18px 0 8px;">${heading}</h3>`;
+        html += standingsTableHtml(teams, result.year, { extended: true, last5, vertical: verticalMql.matches, spots, leagueId: lg, sortByGroup });
       }
       wrap.innerHTML = html;
     }
 
-    // Click a column header to sort by it; click again to reverse.
+    // Click a column header to sort by it; click again to reverse. Only the
+    // division/table that button belongs to (its data-group) is affected.
     wrap.addEventListener('click', (e) => {
       const btn = e.target.closest('[data-sort]');
       if (!btn || !wrap.contains(btn)) return;
-      sortState = nextStandingsSort(sortState, btn.dataset.sort);
+      const group = btn.dataset.group;
+      const current = sortByGroup.get(group) || STANDINGS_DEFAULT_SORT;
+      sortByGroup.set(group, nextStandingsSort(current, btn.dataset.sort));
       render(currentLast5);
     });
 
@@ -3799,7 +3961,9 @@ function runStandingsPage() {
     ).join(' · ');
   }
 
-  let sortState = STANDINGS_DEFAULT_SORT;
+  // Each division's own sort ("103:East", "104:West", ...) - see standingsTableHtml -
+  // so clicking a column header in one division only ever re-sorts that division.
+  const sortByGroup = new Map();
   let shown = null; // { data, year } currently on screen, so a header click can re-render it
 
   function renderStandings(data, year) {
@@ -3824,19 +3988,143 @@ function runStandingsPage() {
       teams.sort((a, b) => (b.pct ?? 0) - (a.pct ?? 0));
       html += `<h3 class="league-heading" style="font-family:var(--font-body);font-size:0.92rem;font-weight:600;
         color:var(--text-secondary);margin:18px 0 8px;">${leagueLogoCardHtml(lg)}<span>${LEAGUE_NAMES[lg] || `League ${lg}`}</span></h3>`;
-      html += standingsTableHtml(teams, year, { spots, sort: sortState });
+      html += standingsTableHtml(teams, year, { spots, leagueId: lg, sortByGroup });
     }
 
     wrap.innerHTML = html;
   }
 
-  // Click a column header to sort by it; click again to reverse.
+  // Click a column header to sort by it; click again to reverse. Only the
+  // division/table that button belongs to (its data-group) is affected.
   document.getElementById('standings-body-wrap').addEventListener('click', (e) => {
     const btn = e.target.closest('[data-sort]');
     if (!btn || !shown) return;
-    sortState = nextStandingsSort(sortState, btn.dataset.sort);
+    const group = btn.dataset.group;
+    const current = sortByGroup.get(group) || STANDINGS_DEFAULT_SORT;
+    sortByGroup.set(group, nextStandingsSort(current, btn.dataset.sort));
     renderStandings(shown.data, shown.year);
   });
+
+  main();
+
+}
+
+// ---- league.js (AL.html / NL.html) ----
+// A flat, whole-league ranking - all 15 teams of one league in a single table,
+// no East/Central/West split. Which league (103 = American, 104 = National) is
+// read from <body data-league>, so this one function serves both pages.
+function runLeaguePage() {
+
+  const LEAGUE_NAMES = { 103: 'American League', 104: 'National League' };
+  const leagueId = Number(document.body.dataset.league);
+
+  async function main() {
+    const manifest = await loadManifest().catch((err) => {
+      setStatus(document.getElementById('league-status'), `Couldn't load the archive right now (${err.message}).`, true);
+      return null;
+    });
+    if (!manifest) return;
+    loadStandings(manifest);
+  }
+
+  async function loadStandings(manifest) {
+    const statusEl = document.getElementById('league-status');
+    const wrap = document.getElementById('league-wrap');
+    const heading = document.getElementById('league-heading');
+    setStatus(statusEl, 'Loading standings…');
+
+    const result = await fetchLatestAvailable(manifest, 'standings-splits.json', { validate: isStandingsShape }).catch(() => null);
+    if (!result || !result.data || !Array.isArray(result.data.teams)) {
+      setStatus(statusEl, "Couldn't find standings for any season.", true);
+      return;
+    }
+
+    const leagueName = LEAGUE_NAMES[leagueId] || `League ${leagueId}`;
+    const teams = result.data.teams.filter(t => String(t.lg) === String(leagueId));
+    document.title = `${leagueName} — MLB Archive`;
+    heading.textContent = `${leagueName} — ${result.year}`;
+
+    const names = new Map();
+    for (const t of result.data.teams) names.set(String(t.id), t.n || `Team ${t.id}`);
+
+    // Playoff spots are worked out from the FULL season list (both leagues) -
+    // computePlayoffSpots groups by league internally, so this league's teams
+    // still land in the right division/wild-card slots either way.
+    const spots = computePlayoffSpots(result.data.teams, result.year);
+    let sortState = STANDINGS_DEFAULT_SORT; // one flat table here, so one sort is correct
+
+    const verticalMql = window.matchMedia(VERTICAL_SCREEN_QUERY);
+    let currentLast5 = { status: 'pending' };
+
+    function render(last5) {
+      currentLast5 = last5;
+      let html = '';
+      if (last5.status === 'unavailable') {
+        html += `<p class="l5-note">Last 5 results couldn't be loaded for ${result.year}.</p>`;
+      }
+      html += standingsTableHtml(teams, result.year, {
+        extended: true, last5, vertical: verticalMql.matches, spots, sort: sortState, flat: true, leagueId,
+      });
+      wrap.innerHTML = html;
+    }
+
+    wrap.addEventListener('click', (e) => {
+      const btn = e.target.closest('[data-sort]');
+      if (!btn || !wrap.contains(btn)) return;
+      sortState = nextStandingsSort(sortState, btn.dataset.sort);
+      render(currentLast5);
+    });
+
+    const onScreenShapeChange = () => render(currentLast5);
+    if (verticalMql.addEventListener) verticalMql.addEventListener('change', onScreenShapeChange);
+    else if (verticalMql.addListener) verticalMql.addListener(onScreenShapeChange);
+
+    render({ status: 'pending' });
+    clearStatus(statusEl);
+    wrap.hidden = false;
+
+    const seasonIsCurrent = Number(result.year) >= new Date().getFullYear();
+    const [schedule, liveInitial] = await Promise.all([
+      fetchSeasonSchedule(manifest, result.year),
+      seasonIsCurrent ? fetchLiveGames().catch(() => []) : Promise.resolve([]),
+    ]);
+
+    if (!(Array.isArray(schedule) && schedule.length > 0)) {
+      render({ status: 'unavailable' });
+      return;
+    }
+
+    let finishedByTeam = buildLastFive(schedule);
+    let liveList = liveInitial;
+    render({ status: 'ready', byTeam: finishedByTeam, names, live: liveByTeam(liveList) });
+
+    if (!seasonIsCurrent) return;
+    let busy = false;
+    let finishedRetries = 0;
+    setInterval(async () => {
+      if (busy || document.hidden) return;
+      busy = true;
+      try {
+        const next = await fetchLiveGames();
+        const ended = liveList.some(p => !next.some(n => String(n.gamePk) === String(p.gamePk)));
+        const changed = liveListSig(next) !== liveListSig(liveList);
+        if (ended) finishedRetries = 3;
+
+        let refetched = false;
+        if (finishedRetries > 0) {
+          finishedRetries--;
+          const fresh = await fetchSeasonSchedule(manifest, result.year);
+          if (Array.isArray(fresh) && fresh.length > 0) { finishedByTeam = buildLastFive(fresh); refetched = true; }
+        }
+
+        liveList = next;
+        if (changed || refetched) {
+          render({ status: 'ready', byTeam: finishedByTeam, names, live: liveByTeam(liveList) });
+        }
+      } catch (_) { /* a failed refresh keeps what is already on screen */ }
+      finally { busy = false; }
+    }, LIVE_POLL_MS);
+  }
 
   main();
 
@@ -5196,6 +5484,7 @@ function runGamePage() {
 // ---- dispatcher: run only the one page that's actually loaded ----
 (function dispatch() {
   if (document.getElementById('standings-heading')) { runIndexPage(); return; }
+  if (document.getElementById('league-heading')) { runLeaguePage(); return; }
   if (document.getElementById('team-name')) { runTeamPage(); return; }
   if (document.getElementById('team-grid')) { runTeamsPage(); return; }
   if (document.getElementById('player-name')) { runPlayerPage(); return; }
