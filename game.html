@@ -21,31 +21,39 @@
 
 <main>
   <div id="status" class="state-msg" hidden></div>
+
   <div id="content" hidden>
-    <div class="hero">
+    <div class="hero" id="hero">
       <div class="hero__eyebrow" id="game-date">—</div>
-      <h1 class="hero__title" id="game-matchup">—</h1>
+      <h1 class="sr-only" id="game-title">Game</h1>
+      <div class="gx-hero" id="game-matchup"></div>
+      <p class="gx-meta" id="game-meta" hidden></p>
     </div>
 
-    <section class="block">
-      <h2 class="block__heading">Linescore</h2>
-      <div class="table-scroll"><table class="ledger" id="linescore-table"></table></div>
-    </section>
+    <section class="block" id="game-tabs-block">
+      <div class="tabs" id="game-tabs" role="tablist" aria-label="Game sections">
+        <button type="button" class="tab is-active" role="tab" id="gtab-summary" aria-selected="true" aria-controls="gpanel-summary" data-tab="summary">Summary</button>
+        <button type="button" class="tab" role="tab" id="gtab-box" aria-selected="false" aria-controls="gpanel-box" data-tab="box" tabindex="-1">Box score</button>
+        <button type="button" class="tab" role="tab" id="gtab-stats" aria-selected="false" aria-controls="gpanel-stats" data-tab="stats" tabindex="-1">Team stats</button>
+        <button type="button" class="tab" role="tab" id="gtab-plays" aria-selected="false" aria-controls="gpanel-plays" data-tab="plays" tabindex="-1">Plays</button>
+        <button type="button" class="tab" role="tab" id="gtab-winprob" aria-selected="false" aria-controls="gpanel-winprob" data-tab="winprob" tabindex="-1">Win probability</button>
+      </div>
 
-    <section class="block">
-      <h2 class="block__heading">Box score</h2>
-      <div id="boxscore-away"></div>
-      <div id="boxscore-home"></div>
-    </section>
-
-    <section class="block">
-      <h2 class="block__heading">Win probability</h2>
-      <div id="winprob-chart"></div>
-    </section>
-
-    <section class="block">
-      <h2 class="block__heading">Play by play</h2>
-      <div id="playbyplay-list"></div>
+      <div class="tab-panel" id="gpanel-summary" role="tabpanel" aria-labelledby="gtab-summary">
+        <div id="g-summary"></div>
+      </div>
+      <div class="tab-panel" id="gpanel-box" role="tabpanel" aria-labelledby="gtab-box" hidden>
+        <div id="g-box"></div>
+      </div>
+      <div class="tab-panel" id="gpanel-stats" role="tabpanel" aria-labelledby="gtab-stats" hidden>
+        <div id="g-stats"></div>
+      </div>
+      <div class="tab-panel" id="gpanel-plays" role="tabpanel" aria-labelledby="gtab-plays" hidden>
+        <div id="g-plays"></div>
+      </div>
+      <div class="tab-panel" id="gpanel-winprob" role="tabpanel" aria-labelledby="gtab-winprob" hidden>
+        <div id="g-winprob"></div>
+      </div>
     </section>
   </div>
 </main>
