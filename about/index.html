@@ -14,28 +14,6 @@
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=Figtree:wght@400..700&display=swap" rel="stylesheet">
-<style>
-.about-note .hb-line { display: block; }
-.about-note strong.hb-name { display: block; width: fit-content; margin: 0 auto; color: #fff; }
-@supports ((-webkit-background-clip: text) or (background-clip: text)) {
-  .about-note strong.hb-name {
-    background-image: linear-gradient(100deg, #fff 0%, #fff 44%, #8D0118 50%, #fff 56%, #fff 100%);
-    background-size: 300% 100%;
-    background-repeat: no-repeat;
-    background-position: 100% 0;
-    -webkit-background-clip: text;
-    background-clip: text;
-    -webkit-text-fill-color: transparent;
-    animation: hb-text-shine 1.8s cubic-bezier(.45, .05, .55, .95) 1.3s 1 both;
-  }
-}
-.credit-mark .hb-band { animation: hb-svg-shine 1.8s cubic-bezier(.45, .05, .55, .95) 1.3s 1 both; }
-@keyframes hb-text-shine { from { background-position: 100% 0; } to { background-position: 0% 0; } }
-@keyframes hb-svg-shine { from { transform: translateX(0) skewX(-20deg); } to { transform: translateX(1700px) skewX(-20deg); } }
-@media (prefers-reduced-motion: reduce) {
-  .about-note strong.hb-name, .credit-mark .hb-band { animation: none; }
-}
-</style>
 </head>
 <body class="about-page">
 <div class="about-bg" aria-hidden="true">
@@ -50,11 +28,10 @@
   </div>
 </header>
 <main class="about-main">
-  <p class="about-note"><strong class="hb-name">HIDDEN BALL</strong><span class="hb-line">An independent project that</span><span class="hb-line">isn't affiliated with any MLB club.</span></p>
-  <a class="credit-mark" href="mailto:ocaif@outlook.com" aria-label="Email ocaif@outlook.com" style="color:#fff;opacity:1">
+  <p class="about-note"><strong>Hidden Ball</strong>, an independent project that isn't affiliated with any MLB club.</p>
+  <a class="credit-mark" href="mailto:ocaif@outlook.com" aria-label="Email ocaif@outlook.com" style="color:#fff;opacity:0.3">
 <svg viewBox="0 0 892 981" xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink" aria-hidden="true" focusable="false">
 <defs>
-<linearGradient id="hb-grad" x1="0" y1="0" x2="1" y2="0"><stop offset="0" stop-color="#8D0118" stop-opacity="0"/><stop offset="0.5" stop-color="#8D0118" stop-opacity="1"/><stop offset="1" stop-color="#8D0118" stop-opacity="0"/></linearGradient>
 <mask id="hb-mask" maskUnits="userSpaceOnUse" x="0" y="0" width="892" height="981"><use href="#hb-art" xlink:href="#hb-art"/></mask>
 <g id="hb-art">
 <path d="M0,0 L892,0 L892,981 L0,981 Z M33,22 L33,785 L576,785 L576,783 L566,779 L551,771 L533,759 L522,750 L510,739 L501,729 L490,714 L482,701 L472,680 L463,654 L458,627 L457,620 L457,580 L460,558 L466,533 L475,509 L484,490 L493,475 L505,458 L516,445 L520,440 L528,433 L537,424 L550,414 L566,403 L582,394 L594,388 L605,384 L614,380 L637,373 L656,369 L679,366 L732,366 L759,370 L775,374 L798,381 L806,385 L813,388 L830,397 L848,409 L859,418 L863,420 L863,22 Z " fill="#fff" transform="translate(0,0)"/>
@@ -91,8 +68,7 @@
 <path d="M0,0 L7,1 L3,4 L-2,2 Z " fill="#fff" transform="translate(549,826)"/>
 </g>
 </defs>
-<g opacity="0.5"><rect x="0" y="0" width="892" height="981" fill="#fff" mask="url(#hb-mask)"/></g>
-<g mask="url(#hb-mask)"><rect class="hb-band" x="-400" y="0" width="400" height="981" fill="url(#hb-grad)"/></g>
+<rect x="0" y="0" width="892" height="981" fill="#fff" mask="url(#hb-mask)"/>
 </svg>
 </a>
 </main>
