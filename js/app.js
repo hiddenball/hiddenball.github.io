@@ -1672,7 +1672,7 @@ function runTeamPage() {
     initTeamTabs(manifest, id, team);
   }
   function renderTeam(team) {
-    document.title = `${team.currentName} — Hidden Ball`;
+    document.title = `${team.currentName}`;
     const crumbEl = document.getElementById('crumb-name');
     if (crumbEl) crumbEl.textContent = team.currentName;
     document.getElementById('team-name').textContent = team.currentName;
@@ -2562,7 +2562,7 @@ function runPlayerPage() {
   }
   function renderBio(p, extra) {
     const api = extra && extra.api ? extra.api : null;
-    document.title = `${p.fullName} — Hidden Ball`;
+    document.title = `${p.fullName}`;
     const crumbEl = document.getElementById('crumb-name');
     if (crumbEl) crumbEl.textContent = p.fullName;
     document.getElementById('player-name').textContent = p.fullName;
@@ -3931,7 +3931,7 @@ function runManagerPage() {
     loadCareerRecord(manifest, id, manager);
   }
   function renderBio(m) {
-    document.title = `${m.fullName} — Hidden Ball`;
+    document.title = `${m.fullName}`;
     const crumbEl = document.getElementById('crumb-name');
     if (crumbEl) crumbEl.textContent = m.fullName;
     document.getElementById('manager-name').textContent = m.fullName;
@@ -4122,7 +4122,7 @@ function runBallparkPage() {
     initGamesHosted(manifest, id);
   }
   function renderBallpark(bp) {
-    document.title = `${bp.currentName} — Hidden Ball`;
+    document.title = `${bp.currentName}`;
     const crumbEl = document.getElementById('crumb-name');
     if (crumbEl) crumbEl.textContent = bp.currentName;
     document.getElementById('ballpark-name').textContent = bp.currentName;
@@ -4410,7 +4410,7 @@ function runStandingsPage() {
       year = result.year;
       data = result.data;
     }
-    document.title = `Standings — ${year} — Hidden Ball`;
+    document.title = `Standings — ${year}`;
     document.getElementById('standings-title').textContent = `${year} Standings`;
     renderYearPicker(year);
     const names = new Map();
@@ -4555,7 +4555,7 @@ function runLeaguePage() {
     }
     const leagueName = LEAGUE_NAMES[leagueId] || `League ${leagueId}`;
     const teams = result.data.teams.filter(t => String(t.lg) === String(leagueId));
-    document.title = `${leagueName} — Hidden Ball`;
+    document.title = `${leagueName}`;
     heading.textContent = `${leagueId === 103 ? 'AL' : leagueId === 104 ? 'NL' : leagueName}/${result.year}`;
     const names = new Map();
     for (const t of result.data.teams) names.set(String(t.id), t.n || `Team ${t.id}`);
@@ -4669,7 +4669,7 @@ function runScoresPage() {
       year = result.year;
       data = result.data;
     }
-    document.title = `Scores — ${year} — Hidden Ball`;
+    document.title = `Scores — ${year}`;
     renderYearPicker(year);
     allGames = (Array.isArray(data) ? data : [])
       .filter(g => g.status === 'Final' || g.status === 'Completed Early')
@@ -4762,7 +4762,7 @@ function runPostseasonPage() {
       year = result.year;
       data = result.data;
     }
-    document.title = `Postseason — ${year} — Hidden Ball`;
+    document.title = `Postseason — ${year}`;
     document.getElementById('postseason-title').textContent = `Postseason — ${year}`;
     renderYearPicker(year);
     if (!data || !Array.isArray(data) || data.length === 0) {
@@ -4861,7 +4861,7 @@ function runAwardsPage() {
       year = result.year;
       data = result.data;
     }
-    document.title = `Awards — ${year} — Hidden Ball`;
+    document.title = `Awards — ${year}`;
     document.getElementById('awards-title').textContent = `Awards — ${year}`;
     renderYearPicker(year);
     if (!data || !Array.isArray(data) || data.length === 0) {
@@ -4964,7 +4964,7 @@ function runDraftPage() {
       year = result.year;
       data = result.data;
     }
-    document.title = `Draft — ${year} — Hidden Ball`;
+    document.title = `Draft — ${year}`;
     renderYearPicker(year);
     if (!data || !Array.isArray(data.picks) || data.picks.length === 0) {
       setStatus(statusEl, `No draft results found for ${year}.`, true);
@@ -5273,7 +5273,7 @@ function runTransactionsPage() {
       data = found.data;
     }
     const monthLabel = MONTH_NAMES[parseInt(month, 10) - 1] || month;
-    document.title = `Transactions — ${monthLabel} ${year} — Hidden Ball`;
+    document.title = `Transactions — ${monthLabel} ${year}`;
     const rows = (data && Array.isArray(data.tx)) ? data.tx : [];
     await loadTeamNames(manifest, rows);
     state.items = buildItems(rows);
@@ -6354,7 +6354,7 @@ function runGamePage() {
         a: m.lineupIds(m.away).length ? null : pvRosterRows(m, m.away, ra),
         h: m.lineupIds(m.home).length ? null : pvRosterRows(m, m.home, rh),
       };
-      document.title = `${m.away.nick} vs ${m.home.nick} \u2014 Hidden Ball`;
+      document.title = `${m.away.nick} vs ${m.home.nick}`;
       root.innerHTML = pvHtml(m, vd, rosters);
       pv.sig = sig;
       pv.ready = true;
@@ -6722,7 +6722,7 @@ function runGamePage() {
       : `<a class="mu-team" href="/team/?id=${encodeURIComponent(team.id)}">${inner}</a>`;
   }
   function renderHero(game, v) {
-    document.title = `${v.live ? 'LIVE \u00b7 ' : ''}${v.away.nick} vs ${v.home.nick} \u2014 Hidden Ball`;
+    document.title = `${v.live ? 'LIVE \u00b7 ' : ''}${v.away.nick} vs ${v.home.nick}`;
     byId('game-date').textContent = fmtDate(game.date);
     byId('game-date').hidden = true;
     const shown = (n) => (n === null ? '\u2014' : String(n));
@@ -8223,7 +8223,7 @@ function runSearchPage() {
     all: 'Search teams, players and managers\u2026', teams: 'Search teams\u2026',
     players: 'Search players\u2026', managers: 'Search managers\u2026',
   };
-  document.title = type === 'all' ? 'Search \u2014 Hidden Ball' : `${LABELS[type]} \u2014 Hidden Ball`;
+  document.title = type === 'all' ? 'Search' : `${LABELS[type]}`;
   renderChips();
   const titleEl = document.getElementById('sx-title');
   if (titleEl) {
