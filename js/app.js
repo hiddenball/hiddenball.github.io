@@ -671,13 +671,13 @@ function standingsTableHtml(teams, year, opts = {}) {
           Number.isFinite(Number(t.w)) && Number.isFinite(Number(t.l));
         return `<td class="num">${ok ? Number(t.w) + Number(t.l) : '—'}</td>`;
       }
-      case 'w': return `<td class="num">${t.w ?? '—'}</td>`;
-      case 'l': return `<td class="num">${t.l ?? '—'}</td>`;
+      case 'w': return `<td class="num st-w">${t.w ?? '—'}</td>`;
+      case 'l': return `<td class="num st-l">${t.l ?? '—'}</td>`;
       case 'pct': {
         const val = t.pct !== undefined && t.pct !== null ? t.pct : '—';
         const trend = extended && !opts.plainPct ? pctTrend(t.id, opts.last5) : null;
-        if (!trend) return `<td class="num">${val}</td>`;
-        return `<td class="num ${trend.cls}" title="${escapeHtml(trend.tip)}">${val}</td>`;
+        if (!trend) return `<td class="num st-pct">${val}</td>`;
+        return `<td class="num st-pct ${trend.cls}" title="${escapeHtml(trend.tip)}">${val}</td>`;
       }
       case 'gb': return `<td class="num">${t.gb ?? '—'}</td>`;
       case 'last5': return lastFiveCellHtml(t.id, year, opts.last5);
@@ -758,9 +758,11 @@ function runIndexPage() {
       });
     }
     async function render(games) {
+      const todayHeading = document.getElementById('today-heading');
       if (games.length === 0) {
         wrap.hidden = true;
         setStatus(statusEl, 'No live games, and none starting in the next 24 hours.');
+        if (todayHeading) todayHeading.hidden = false;
         return;
       }
       const rows = [];
@@ -803,11 +805,14 @@ function runIndexPage() {
       wrap.innerHTML = `<div class="gm-list">${rows.join('')}</div>`;
       clearStatus(statusEl);
       wrap.hidden = false;
+      if (todayHeading) todayHeading.hidden = false;
     }
     try {
       current = await fetchShown();
     } catch (err) {
       setStatus(statusEl, `Couldn't load today's games (${err.message}).`, true);
+      const th = document.getElementById('today-heading');
+      if (th) th.hidden = false;
       return;
     }
     await render(current);
@@ -1311,6 +1316,8 @@ function runIndexPage() {
     const series = draw();
     clearStatus(statusEl);
     wrap.hidden = false;
+    heading.hidden = false;
+    document.querySelector('main').classList.add('is-postseason');
     try { showPostseasonStandings(manifest, phase.year, standingsTeams, wrap); } catch (_) { }
     const over = series.some((s) => s.type === 'W' && s.winner);
     if (over || phase.year < new Date().getFullYear()) return;
@@ -1495,6 +1502,7 @@ function runIndexPage() {
     render({ status: 'pending' });
     clearStatus(statusEl);
     wrap.hidden = false;
+    heading.hidden = false;
     const seasonIsCurrent = Number(result.year) >= new Date().getFullYear();
     const [schedule, liveInitial] = await Promise.all([
       fetchSeasonSchedule(manifest, result.year),
