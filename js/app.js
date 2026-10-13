@@ -1,4 +1,4 @@
-const MANIFEST_URL = 'https://cdn.jsdelivr.net/gh/hiddenball/mlb-data-core@main/manifest.json';
+const MANIFEST_URL = 'https://cdn.jsdelivr.net/gh/hiddenball/r45@main/manifest.json';
 const MANIFEST_CACHE_KEY = 'mlb-archive:manifest';
 const MANIFEST_CACHE_MAX_AGE_MS = 1000 * 60 * 60;
 let manifestPromise = null;
