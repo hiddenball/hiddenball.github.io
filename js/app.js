@@ -202,7 +202,7 @@ async function fetchCoreIndex(manifest, name) {
   const data = await fetchJSONOrNull(url);
   return data || [];
 }
-function initEntityBrowser({ entries, containerEl, searchEl, hrefFor, logoFor, maxRender = 100, emptyMessage = 'No matches.' }) {
+function initEntityBrowser({ entries, containerEl, searchEl, hrefFor, logoFor, maxRender = 100, emptyMessage = '' }) {
   function render(query) {
     const q = (query || '').trim().toLowerCase();
     const matches = q ? entries.filter(e => e.name.toLowerCase().includes(q)) : entries;
@@ -721,7 +721,7 @@ function runIndexPage() {
     setLoading(document.getElementById('standings-status'));
     const manifest = await loadManifest().catch((err) => {
       document.querySelectorAll('.state-msg').forEach(el => {
-        setStatus(el, `Couldn't load the archive right now (${err.message}).`, true);
+        setStatus(el, 'Couldn\'t load.', true);
       });
       return null;
     });
@@ -761,7 +761,7 @@ function runIndexPage() {
       const todayHeading = document.getElementById('today-heading');
       if (games.length === 0) {
         wrap.hidden = true;
-        setStatus(statusEl, 'No live games, and none starting in the next 24 hours.');
+        setStatus(statusEl, '');
         if (todayHeading) todayHeading.hidden = false;
         return;
       }
@@ -810,7 +810,7 @@ function runIndexPage() {
     try {
       current = await fetchShown();
     } catch (err) {
-      setStatus(statusEl, `Couldn't load today's games (${err.message}).`, true);
+      setStatus(statusEl, 'Couldn\'t load.', true);
       const th = document.getElementById('today-heading');
       if (th) th.hidden = false;
       return;
@@ -1357,7 +1357,7 @@ function runIndexPage() {
       }
       let html = '';
       if (last5.status === 'unavailable') {
-        html += `<p class="l5-note">Last 5 results couldn't be loaded for ${year}.</p>`;
+        html += `<p class="l5-note"></p>`;
       }
       for (const [lg, list] of byLeague) {
         const page = LEAGUE_PAGES[lg];
@@ -1442,7 +1442,7 @@ function runIndexPage() {
     setLoading(statusEl);
     const result = await fetchLatestAvailable(manifest, 'standings-splits.json', { transform: normalizeStandings, validate: isStandingsShape }).catch(() => null);
     if (!result || !result.data || !Array.isArray(result.data.teams)) {
-      setStatus(statusEl, "Couldn't find standings for any season.", true);
+      setStatus(statusEl, "Couldn't load.", true);
       return;
     }
     const phase = await decidePhase(manifest, result);
@@ -1474,7 +1474,7 @@ function runIndexPage() {
       currentLast5 = last5;
       let html = '';
       if (last5.status === 'unavailable') {
-        html += `<p class="l5-note">Last 5 results couldn't be loaded for ${result.year}.</p>`;
+        html += `<p class="l5-note"></p>`;
       }
       for (const [lg, teams] of byLeague) {
         const page = LEAGUE_PAGES[lg];
@@ -1649,7 +1649,7 @@ function runTeamPage() {
   async function main() {
     const id = qs('id');
     if (!id) {
-      setStatus(statusEl, 'No team specified. Go back to Teams and pick one.', true);
+      setStatus(statusEl, 'Pick one.', true);
       return;
     }
     setLoading(statusEl);
@@ -1658,11 +1658,11 @@ function runTeamPage() {
       manifest = await loadManifest();
       team = await fetchCoreRecord(manifest, 'teams', id);
     } catch (err) {
-      setStatus(statusEl, `Couldn't load this team right now (${err.message}). Try refreshing.`, true);
+      setStatus(statusEl, 'Couldn\'t load.', true);
       return;
     }
     if (!team) {
-      setStatus(statusEl, `No team found with id "${id}".`, true);
+      setStatus(statusEl, 'Not found.', true);
       return;
     }
     renderTeam(team);
@@ -1829,12 +1829,12 @@ function runTeamPage() {
       found = f;
       liveEntry = liveByTeam(liveList).get(String(teamId)) || null;
       if (!found && !liveEntry) {
-        setStatus(statusEl2, 'No completed games found for this team in the archive.');
+        setStatus(statusEl2, '');
       } else {
         await render();
       }
     } catch (err) {
-      setStatus(statusEl2, `Couldn't load recent games (${err.message}).`, true);
+      setStatus(statusEl2, 'Couldn\'t load.', true);
       return;
     }
     setInterval(tick, LIVE_POLL_MS);
@@ -2065,12 +2065,12 @@ function runTeamPage() {
       } catch (err) {
         if (my !== tokens.games) return;
         loadedYear.games = null;
-        setStatus(status, `Couldn't load games for ${year} (${err.message}).`, true);
+        setStatus(status, 'Couldn\'t load.', true);
         return;
       }
       if (my !== tokens.games) return;
       if (games.length === 0) {
-        setStatus(status, `No completed games found for this team in ${year}.`);
+        setStatus(status, '');
         return;
       }
       list.innerHTML = `<div class="gm-list">${games.map(g => gameRowHtml(g, year, names)).join('')}</div>`;
@@ -2107,13 +2107,13 @@ function runTeamPage() {
       } catch (err) {
         if (my !== tokens.squad) return;
         loadedYear.squad = null;
-        setStatus(status, `Couldn't load the ${year} squad (${err.message}).`, true);
+        setStatus(status, 'Couldn\'t load.', true);
         return;
       }
       if (my !== tokens.squad) return;
       const players = rosters && rosters.teams && Array.isArray(rosters.teams[teamId]) ? rosters.teams[teamId].slice() : [];
       if (players.length === 0 && managers.length === 0) {
-        setStatus(status, `No squad found for this team in ${year}.`);
+        setStatus(status, '');
         return;
       }
       const posRank = (p) => { const i = TAB_POS_ORDER.indexOf(p); return i === -1 ? 99 : i; };
@@ -2141,7 +2141,7 @@ function runTeamPage() {
           `</tr>`).join('') +
           `</tbody></table></div>`;
       } else {
-        html += `<p class="tab-note">No player roster found for ${year}.</p>`;
+        html += `<p class="tab-note"></p>`;
       }
       body.innerHTML = html;
       clearStatus(status);
@@ -2157,13 +2157,13 @@ function runTeamPage() {
       } catch (err) {
         if (my !== tokens.standings) return;
         loadedYear.standings = null;
-        setStatus(status, `Couldn't load the ${year} standings (${err.message}).`, true);
+        setStatus(status, 'Couldn\'t load.', true);
         return;
       }
       if (my !== tokens.standings) return;
       const rows = data && Array.isArray(data.teams) ? data.teams : null;
       if (!rows) {
-        setStatus(status, `No standings found for ${year}.`);
+        setStatus(status, '');
         return;
       }
       const me = rows.find(t => String(t.id) === String(teamId));
@@ -2342,7 +2342,7 @@ function runTeamsPage() {
         `<div class="tm-list tm-list--wide">${inactive.map(cardHtml).join('')}</div></section>`;
     }
     if (shown.length === 0) {
-      html = `<p class="state-msg tm-empty">No teams match \u201C${escapeHtml(raw.trim())}\u201D.</p>`;
+      html = `<p class="state-msg tm-empty"></p>`;
     }
     gridEl.innerHTML = html;
     if (countEl) {
@@ -2388,11 +2388,11 @@ function runTeamsPage() {
       manifest = await loadManifest();
       entries = await fetchCoreIndex(manifest, 'teams');
     } catch (err) {
-      setStatus(statusEl, `Couldn't load teams right now (${err.message}). Try refreshing.`, true);
+      setStatus(statusEl, 'Couldn\'t load.', true);
       return;
     }
     if (entries.length === 0) {
-      setStatus(statusEl, 'No teams found.', true);
+      setStatus(statusEl, '', true);
       return;
     }
     const year = new Date().getFullYear();
@@ -2459,7 +2459,7 @@ function runPlayerPage() {
   async function main() {
     const id = qs('id');
     if (!id) {
-      setStatus(statusEl, 'No player specified. Go back to Players and pick one.', true);
+      setStatus(statusEl, 'Pick one.', true);
       return;
     }
     setLoading(statusEl);
@@ -2468,11 +2468,11 @@ function runPlayerPage() {
       manifest = await loadManifest();
       player = await fetchCoreRecord(manifest, 'players', id);
     } catch (err) {
-      setStatus(statusEl, `Couldn't load this player right now (${err.message}). Try refreshing.`, true);
+      setStatus(statusEl, 'Couldn\'t load.', true);
       return;
     }
     if (!player) {
-      setStatus(statusEl, `No player found with id "${id}".`, true);
+      setStatus(statusEl, 'Not found.', true);
       return;
     }
     renderBio(player);
@@ -2638,7 +2638,7 @@ function runPlayerPage() {
     }
     await Promise.all(Array.from({ length: CONCURRENCY }, worker));
     if (hitting.length === 0 && pitching.length === 0 && fielding.length === 0) {
-      setStatus(statsStatusEl, 'No season stats found for this player in the archive.', true);
+      setStatus(statsStatusEl, '', true);
       return { hitting, pitching, fielding };
     }
     clearStatus(statsStatusEl);
@@ -3061,7 +3061,7 @@ function runPlayerPage() {
         splits = await fetchGameLog(year, group);
       } catch (err) {
         if (my !== token) return;
-        setStatus(status, `Couldn't load games for ${year} (${err.message}).`, true);
+        setStatus(status, 'Couldn\'t load.', true);
         return;
       }
       if (my !== token) return;
@@ -3131,7 +3131,7 @@ function runPlayerPage() {
       }
       teams = [...byTeam.values()];
       if (teams.length === 0) {
-        setStatus(status, 'No seasons found for this player in the archive.', true);
+        setStatus(status, '', true);
         teamSel.disabled = seasonSel.disabled = true;
         return;
       }
@@ -3150,7 +3150,7 @@ function runPlayerPage() {
       load();
     }
     start().catch((err) => {
-      setStatus(status, `Couldn't load games (${err.message}).`, true);
+      setStatus(status, 'Couldn\'t load.', true);
     });
   }
   async function renderCareerTab(manifest, player, statsPromise, extrasPromise) {
@@ -3161,12 +3161,12 @@ function runPlayerPage() {
     try {
       [rows, api] = await Promise.all([statsPromise, extrasPromise]);
     } catch (err) {
-      setStatus(status, `Couldn't load the career (${err.message}).`, true);
+      setStatus(status, 'Couldn\'t load.', true);
       return;
     }
     const hitting = rows.hitting || [], pitching = rows.pitching || [], fielding = rows.fielding || [];
     if (hitting.length + pitching.length + fielding.length === 0) {
-      setStatus(status, 'No career data found for this player in the archive.', true);
+      setStatus(status, '', true);
       return;
     }
     clearStatus(status);
@@ -3494,7 +3494,7 @@ function runPlayerPage() {
         if (my !== token) return;
         state.loading = false;
         progress.hidden = true;
-        setStatus(status, `Couldn't load batted balls (${err.message}). Try again in a moment.`, true);
+        setStatus(status, 'Couldn\'t load.', true);
         apply();
         return;
       }
@@ -3503,10 +3503,10 @@ function runPlayerPage() {
       progress.hidden = true;
       if (!acc.length) {
         setStatus(status, games === 0
-          ? `No games found for ${state.label.toLowerCase()}.`
-          : `No batted-ball locations found for the ${state.label.toLowerCase()}. MLB only has hit-location data for more recent seasons.`);
+          ? ''
+          : '');
       } else if (failed > 0) {
-        setStatus(status, `${failed} game${failed === 1 ? '' : 's'} couldn't be loaded, so the map may be slightly incomplete. Switch season and back to retry.`, true);
+        setStatus(status, 'Couldn\'t load.', true);
       } else if (empty > 0 && years.length > 1) {
         setStatus(status, `${empty} season${empty === 1 ? '' : 's'} had no location data and ${empty === 1 ? 'is' : 'are'} not included.`);
       } else {
@@ -3795,7 +3795,7 @@ function runPlayerPage() {
       const groups = ['hitting', 'pitching'].filter((g) => yearsBy[g].length);
       if (!groups.length) {
         progress.hidden = true;
-        setStatus(status, 'No seasons found for this player in the archive.', true);
+        setStatus(status, '', true);
         seasonSel.disabled = true; gamesSel.disabled = true;
         renderSide();
         return;
@@ -3816,7 +3816,7 @@ function runPlayerPage() {
       seasonSel.addEventListener('change', load);
       load();
     }
-    start().catch((err) => { progress.hidden = true; setStatus(status, `Couldn't start the heat map (${err.message}).`, true); });
+    start().catch((err) => { progress.hidden = true; setStatus(status, 'Couldn\'t load.', true); });
     renderSide();
     return { redraw: scheduleDraw };
   }
@@ -3832,11 +3832,11 @@ function runPlayersPage() {
       manifest = await loadManifest();
       entries = await fetchCoreIndex(manifest, 'players');
     } catch (err) {
-      setStatus(statusEl, `Couldn't load players right now (${err.message}). Try refreshing.`, true);
+      setStatus(statusEl, 'Couldn\'t load.', true);
       return;
     }
     if (entries.length === 0) {
-      setStatus(statusEl, 'No players found.', true);
+      setStatus(statusEl, '', true);
       return;
     }
     const grid = document.getElementById('player-grid');
@@ -3848,7 +3848,7 @@ function runPlayersPage() {
       searchEl: search,
       hrefFor: (e) => `/player/?id=${e.id}`,
       maxRender: 100,
-      emptyMessage: 'No players match your search.',
+      emptyMessage: '',
     });
     clearStatus(statusEl);
     contentEl.hidden = false;
@@ -3909,7 +3909,7 @@ function runManagerPage() {
   async function main() {
     const id = qs('id');
     if (!id) {
-      setStatus(statusEl, 'No manager specified. Go back to Managers and pick one.', true);
+      setStatus(statusEl, 'Pick one.', true);
       return;
     }
     setLoading(statusEl);
@@ -3918,11 +3918,11 @@ function runManagerPage() {
       manifest = await loadManifest();
       manager = await fetchCoreRecord(manifest, 'managers', id);
     } catch (err) {
-      setStatus(statusEl, `Couldn't load this manager right now (${err.message}). Try refreshing.`, true);
+      setStatus(statusEl, 'Couldn\'t load.', true);
       return;
     }
     if (!manager) {
-      setStatus(statusEl, `No manager found with id "${id}".`, true);
+      setStatus(statusEl, 'Not found.', true);
       return;
     }
     renderBio(manager);
@@ -3993,7 +3993,7 @@ function runManagerPage() {
     }
     await Promise.all(Array.from({ length: CONCURRENCY }, worker));
     if (rows.length === 0) {
-      setStatus(statusEl2, 'No season-level record found for this manager in 1980–2025.', true);
+      setStatus(statusEl2, '', true);
       return;
     }
     clearStatus(statusEl2);
@@ -4074,11 +4074,11 @@ function runManagersPage() {
       manifest = await loadManifest();
       entries = await fetchCoreIndex(manifest, 'managers');
     } catch (err) {
-      setStatus(statusEl, `Couldn't load managers right now (${err.message}). Try refreshing.`, true);
+      setStatus(statusEl, 'Couldn\'t load.', true);
       return;
     }
     if (entries.length === 0) {
-      setStatus(statusEl, 'No managers found.', true);
+      setStatus(statusEl, '', true);
       return;
     }
     initEntityBrowser({
@@ -4087,7 +4087,7 @@ function runManagersPage() {
       searchEl: document.getElementById('manager-search'),
       hrefFor: (e) => `/manager/?id=${e.id}`,
       maxRender: 300,
-      emptyMessage: 'No managers match your search.',
+      emptyMessage: '',
     });
     clearStatus(statusEl);
     contentEl.hidden = false;
@@ -4100,7 +4100,7 @@ function runBallparkPage() {
   async function main() {
     const id = qs('id');
     if (!id) {
-      setStatus(statusEl, 'No ballpark specified. Go back to Ballparks and pick one.', true);
+      setStatus(statusEl, 'Pick one.', true);
       return;
     }
     setLoading(statusEl);
@@ -4109,11 +4109,11 @@ function runBallparkPage() {
       manifest = await loadManifest();
       ballpark = await fetchCoreRecord(manifest, 'ballparks', id);
     } catch (err) {
-      setStatus(statusEl, `Couldn't load this ballpark right now (${err.message}). Try refreshing.`, true);
+      setStatus(statusEl, 'Couldn\'t load.', true);
       return;
     }
     if (!ballpark) {
-      setStatus(statusEl, `No ballpark found with id "${id}".`, true);
+      setStatus(statusEl, 'Not found.', true);
       return;
     }
     renderBallpark(ballpark);
@@ -4242,7 +4242,7 @@ function runBallparkPage() {
         ++token;
         wrap.hidden = true;
         note.hidden = true;
-        setStatus(statusEl2, `No completed games found at this ballpark in ${y}.`, true);
+        setStatus(statusEl2, '', true);
         return;
       }
       await renderRows(list, `${y} season hosted \u00b7 ${list.length} game${list.length === 1 ? '' : 's'}`);
@@ -4264,7 +4264,7 @@ function runBallparkPage() {
         ++token;
         wrap.hidden = true;
         note.hidden = true;
-        setStatus(statusEl2, 'No completed games found at this ballpark in 1980\u20132025.', true);
+        setStatus(statusEl2, '', true);
         return;
       }
       await renderRows(all, `All seasons \u00b7 ${all.length.toLocaleString('en-US')} game${all.length === 1 ? '' : 's'} hosted`);
@@ -4297,7 +4297,7 @@ function runBallparkPage() {
       latest = latest.slice(0, LATEST_COUNT);
       if (latest.length === 0) {
         bar.hidden = true;
-        setStatus(statusEl2, 'No completed games found at this ballpark in 1980\u20132025. '
+        setStatus(statusEl2, ''
           + '(The current season isn\u2019t indexed for this lookup yet.)', true);
         return;
       }
@@ -4309,7 +4309,7 @@ function runBallparkPage() {
       }
       await Promise.all(Array.from({ length: 8 }, worker));
       fillSeasons();
-      if (seasonSel.disabled) seasonSel.innerHTML = '<option value="">No seasons found</option>';
+      if (seasonSel.disabled) seasonSel.innerHTML = '<option value=""></option>';
     }
     seasonSel.addEventListener('change', () => {
       const v = seasonSel.value;
@@ -4328,7 +4328,7 @@ function runBallparkPage() {
       else window.location.href = href;
     });
     start().catch((err) => {
-      setStatus(statusEl2, `Couldn't load games (${err.message}).`, true);
+      setStatus(statusEl2, 'Couldn\'t load.', true);
     });
   }
   main();
@@ -4343,11 +4343,11 @@ function runBallparksPage() {
       manifest = await loadManifest();
       entries = await fetchCoreIndex(manifest, 'ballparks');
     } catch (err) {
-      setStatus(statusEl, `Couldn't load ballparks right now (${err.message}). Try refreshing.`, true);
+      setStatus(statusEl, 'Couldn\'t load.', true);
       return;
     }
     if (entries.length === 0) {
-      setStatus(statusEl, 'No ballparks found.', true);
+      setStatus(statusEl, '', true);
       return;
     }
     initEntityBrowser({
@@ -4356,7 +4356,7 @@ function runBallparksPage() {
       searchEl: null,
       hrefFor: (e) => `/ballpark/?id=${e.id}`,
       maxRender: 200,
-      emptyMessage: 'No ballparks found.',
+      emptyMessage: '',
     });
     clearStatus(statusEl);
     contentEl.hidden = false;
@@ -4382,7 +4382,7 @@ function runStandingsPage() {
     try {
       manifest = await loadManifest();
     } catch (err) {
-      setStatus(statusEl, `Couldn't load the archive right now (${err.message}).`, true);
+      setStatus(statusEl, 'Couldn\'t load.', true);
       return;
     }
     const requestedYear = qs('year');
@@ -4393,18 +4393,18 @@ function runStandingsPage() {
         data = normalizeStandings(await fetchSeasonFile(manifest, year, 'standings-splits.json'));
       } catch (err) {
         showPickerOnly(year);
-        setStatus(statusEl, `Couldn't load standings for ${year} (${err.message}).`, true);
+        setStatus(statusEl, 'Couldn\'t load.', true);
         return;
       }
       if (!data || !Array.isArray(data.teams)) {
         showPickerOnly(year);
-        setStatus(statusEl, `No standings found for ${year}.`, true);
+        setStatus(statusEl, '', true);
         return;
       }
     } else {
       const result = await fetchLatestAvailable(manifest, 'standings-splits.json', { transform: normalizeStandings, validate: isStandingsShape }).catch(() => null);
       if (!result) {
-        setStatus(statusEl, "Couldn't find standings for any season.", true);
+        setStatus(statusEl, "Couldn't load.", true);
         return;
       }
       year = result.year;
@@ -4460,7 +4460,7 @@ function runStandingsPage() {
     }
     let html = '';
     if (last5.status === 'unavailable') {
-      html += `<p class="l5-note">Last 5 results couldn't be loaded for ${year}.</p>`;
+      html += `<p class="l5-note"></p>`;
     }
     for (const [lg, teams] of byLeague) {
       const page = LEAGUE_PAGES[lg];
@@ -4537,7 +4537,7 @@ function runLeaguePage() {
   async function main() {
     setLoading(document.getElementById('league-status'));
     const manifest = await loadManifest().catch((err) => {
-      setStatus(document.getElementById('league-status'), `Couldn't load the archive right now (${err.message}).`, true);
+      setStatus(document.getElementById('league-status'), 'Couldn\'t load.', true);
       return null;
     });
     if (!manifest) return;
@@ -4550,7 +4550,7 @@ function runLeaguePage() {
     setLoading(statusEl);
     const result = await fetchLatestAvailable(manifest, 'standings-splits.json', { transform: normalizeStandings, validate: isStandingsShape }).catch(() => null);
     if (!result || !result.data || !Array.isArray(result.data.teams)) {
-      setStatus(statusEl, "Couldn't find standings for any season.", true);
+      setStatus(statusEl, "Couldn't load.", true);
       return;
     }
     const leagueName = LEAGUE_NAMES[leagueId] || `League ${leagueId}`;
@@ -4567,7 +4567,7 @@ function runLeaguePage() {
       currentLast5 = last5;
       let html = '';
       if (last5.status === 'unavailable') {
-        html += `<p class="l5-note">Last 5 results couldn't be loaded for ${result.year}.</p>`;
+        html += `<p class="l5-note"></p>`;
       }
       html += standingsTableHtml(teams, result.year, {
         extended: true, last5, vertical: verticalMql.matches, spots, sort: sortState, flat: true, leagueId,
@@ -4636,7 +4636,7 @@ function runScoresPage() {
     try {
       manifest = await loadManifest();
     } catch (err) {
-      setStatus(statusEl, `Couldn't load the archive right now (${err.message}).`, true);
+      setStatus(statusEl, 'Couldn\'t load.', true);
       return;
     }
     resolveTeamName = createTeamNameResolver(manifest);
@@ -4648,7 +4648,7 @@ function runScoresPage() {
       try {
         data = await fetchSeasonFile(manifest, year, 'schedule.json');
       } catch (err) {
-        setStatus(statusEl, `Couldn't load the ${year} schedule (${err.message}).`, true);
+        setStatus(statusEl, 'Couldn\'t load.', true);
         return;
       }
       if (!data) {
@@ -4656,14 +4656,14 @@ function runScoresPage() {
         contentEl.hidden = false;
         const thisYear = new Date().getFullYear();
         setStatus(statusEl, year >= thisYear
-          ? `No season-wide schedule is available yet for ${year} (this season isn't indexed for browsing this way yet).`
-          : `No schedule found for ${year}.`, true);
+          ? 'Not available.'
+          : '', true);
         return;
       }
     } else {
       const result = await fetchLatestAvailable(manifest, 'schedule.json').catch(() => null);
       if (!result) {
-        setStatus(statusEl, "Couldn't find a schedule for any season.", true);
+        setStatus(statusEl, "Couldn't load.", true);
         return;
       }
       year = result.year;
@@ -4695,7 +4695,7 @@ function runScoresPage() {
       ? allGames.filter(g => g.date && g.date.slice(0, 10) === dateFilter)
       : allGames;
     if (filtered.length === 0) {
-      list.innerHTML = `<p class="state-msg">No games match this date.</p>`;
+      list.innerHTML = `<p class="state-msg"></p>`;
       return;
     }
     const days = [];
@@ -4739,7 +4739,7 @@ function runPostseasonPage() {
     try {
       manifest = await loadManifest();
     } catch (err) {
-      setStatus(statusEl, `Couldn't load the archive right now (${err.message}).`, true);
+      setStatus(statusEl, 'Couldn\'t load.', true);
       return;
     }
     const requestedYear = qs('year');
@@ -4750,13 +4750,13 @@ function runPostseasonPage() {
       try {
         data = await fetchSeasonFile(manifest, year, 'postseason.json');
       } catch (err) {
-        setStatus(statusEl, `Couldn't load the ${year} postseason (${err.message}).`, true);
+        setStatus(statusEl, 'Couldn\'t load.', true);
         return;
       }
     } else {
       const result = await fetchLatestAvailable(manifest, 'postseason.json').catch(() => null);
       if (!result) {
-        setStatus(statusEl, "Couldn't find postseason results for any season.", true);
+        setStatus(statusEl, "Couldn't load.", true);
         return;
       }
       year = result.year;
@@ -4766,7 +4766,7 @@ function runPostseasonPage() {
     document.getElementById('postseason-title').textContent = `Postseason — ${year}`;
     renderYearPicker(year);
     if (!data || !Array.isArray(data) || data.length === 0) {
-      setStatus(statusEl, `No postseason games found for ${year}.`, true);
+      setStatus(statusEl, '', true);
       contentEl.hidden = false;
       document.getElementById('postseason-body').innerHTML = '';
       return;
@@ -4793,7 +4793,7 @@ function runPostseasonPage() {
       .filter(g => g.status === 'Final' || g.status === 'Completed Early')
       .sort((a, b) => (a.date < b.date ? -1 : 1));
     if (finished.length === 0) {
-      body.innerHTML = `<tr><td colspan="5" class="left state-msg">No completed games found.</td></tr>`;
+      body.innerHTML = `<tr><td colspan="5" class="left state-msg"></td></tr>`;
       return;
     }
     const rows = [];
@@ -4838,7 +4838,7 @@ function runAwardsPage() {
     try {
       manifest = await loadManifest();
     } catch (err) {
-      setStatus(statusEl, `Couldn't load the archive right now (${err.message}).`, true);
+      setStatus(statusEl, 'Couldn\'t load.', true);
       return;
     }
     const requestedYear = qs('year');
@@ -4849,13 +4849,13 @@ function runAwardsPage() {
       try {
         data = await fetchSeasonFile(manifest, year, 'awards.json');
       } catch (err) {
-        setStatus(statusEl, `Couldn't load the ${year} awards (${err.message}).`, true);
+        setStatus(statusEl, 'Couldn\'t load.', true);
         return;
       }
     } else {
       const result = await fetchLatestAvailable(manifest, 'awards.json').catch(() => null);
       if (!result) {
-        setStatus(statusEl, "Couldn't find awards for any season.", true);
+        setStatus(statusEl, "Couldn't load.", true);
         return;
       }
       year = result.year;
@@ -4865,7 +4865,7 @@ function runAwardsPage() {
     document.getElementById('awards-title').textContent = `Awards — ${year}`;
     renderYearPicker(year);
     if (!data || !Array.isArray(data) || data.length === 0) {
-      setStatus(statusEl, `No awards found for ${year}.`, true);
+      setStatus(statusEl, '', true);
       contentEl.hidden = false;
       document.getElementById('awards-table').innerHTML = '';
       return;
@@ -4941,7 +4941,7 @@ function runDraftPage() {
     try {
       manifest = await loadManifest();
     } catch (err) {
-      setStatus(statusEl, `Couldn't load the archive right now (${err.message}).`, true);
+      setStatus(statusEl, 'Couldn\'t load.', true);
       return;
     }
     const requestedYear = qs('year');
@@ -4952,13 +4952,13 @@ function runDraftPage() {
       try {
         data = await fetchDraftFile(manifest, year);
       } catch (err) {
-        setStatus(statusEl, `Couldn't load the ${year} draft (${err.message}).`, true);
+        setStatus(statusEl, 'Couldn\'t load.', true);
         return;
       }
     } else {
       const result = await findLatestDraft(manifest);
       if (!result) {
-        setStatus(statusEl, "Couldn't find draft results for any season.", true);
+        setStatus(statusEl, "Couldn't load.", true);
         return;
       }
       year = result.year;
@@ -4967,7 +4967,7 @@ function runDraftPage() {
     document.title = `Draft — ${year}`;
     renderYearPicker(year);
     if (!data || !Array.isArray(data.picks) || data.picks.length === 0) {
-      setStatus(statusEl, `No draft results found for ${year}.`, true);
+      setStatus(statusEl, '', true);
       contentEl.hidden = false;
       document.getElementById('draft-body').innerHTML = '';
       return;
@@ -5154,7 +5154,7 @@ function runTransactionsPage() {
     const list = document.getElementById('tx-list');
     const filtered = state.items.filter((it) => state.group === 'all' || it.group === state.group);
     if (filtered.length === 0) {
-      list.innerHTML = '<p class="state-msg">No transactions found for this month.</p>';
+      list.innerHTML = '<p class="state-msg"></p>';
       return;
     }
     const lead = pickLead(filtered);
@@ -5240,7 +5240,7 @@ function runTransactionsPage() {
     try {
       manifest = await loadManifest();
     } catch (err) {
-      setStatus(statusEl, `Couldn't load the archive right now (${err.message}).`, true);
+      setStatus(statusEl, 'Couldn\'t load.', true);
       return;
     }
     const requestedYear = qs('year');
@@ -5258,14 +5258,14 @@ function runTransactionsPage() {
       try {
         data = await fetchSeasonFile(manifest, year, `transactions/${month}.json`);
       } catch (err) {
-        setStatus(statusEl, `Couldn't load transactions for ${month}/${year} (${err.message}).`, true);
+        setStatus(statusEl, 'Couldn\'t load.', true);
         return;
       }
     } else {
       setLoading(statusEl);
       const found = await findLatestTransactions(manifest);
       if (!found) {
-        setStatus(statusEl, "Couldn't find transactions for any recent month.", true);
+        setStatus(statusEl, "Couldn't load.", true);
         return;
       }
       year = found.year;
@@ -5283,7 +5283,7 @@ function runTransactionsPage() {
       txCountEl.textContent = state.items.length
         ? `${state.items.length.toLocaleString('en-US')} transactions` +
           (trades ? ` \u00b7 ${trades.toLocaleString('en-US')} ${trades === 1 ? 'trade' : 'trades'}` : '')
-        : 'No transactions recorded';
+        : '';
     }
     let focusKey = '';
     try { focusKey = decodeURIComponent((window.location.hash || '').slice(1)); } catch (_) { focusKey = ''; }
@@ -5368,7 +5368,7 @@ function runLeadersPage() {
     try {
       manifest = await loadManifest();
     } catch (err) {
-      setStatus(statusEl, `Couldn't load the archive right now (${err.message}).`, true);
+      setStatus(statusEl, 'Couldn\'t load.', true);
       return;
     }
     const thisYear = new Date().getFullYear();
@@ -5867,7 +5867,7 @@ const LiveKit = (function () {
     const last = lp
       ? `<div class="kz-last"><div class="kz-last__mph">${lp.mph !== null ? Number(lp.mph).toFixed(1) : '\u2014'}<small>mph</small></div>` +
         `<div class="kz-last__t">${esc(lp.type || 'Pitch')}</div><div class="kz-last__call is-${lp.cls}">${esc(lp.call || '')}</div></div>`
-      : `<div class="kz-last kz-last--none">${ab.live ? 'Waiting for the first pitch' : 'No pitches tracked'}</div>`;
+      : '';
     const list = !compact && ab.pitches.length
       ? `<ol class="kz-list" aria-label="Pitches in this at-bat">${ab.pitches.map((p) =>
           `<li class="kz-row"><span class="kz-row__n is-${p.cls}">${p.n}</span><span class="kz-row__t">${esc(p.type || '\u2014')}</span>` +
@@ -5896,8 +5896,8 @@ const LiveKit = (function () {
         `${stat('Distance', h.dist !== null && h.dist > 0 ? Math.round(h.dist) : null, 'ft')}${stat('Type', h.traj ? esc(prettyKey(h.traj)) : null)}</div>` : '';
     const key = kind
       ? `<div class="kz-foot"><span><i class="kz-key kz-key--hit"></i>Hit</span><span><i class="kz-key kz-key--out"></i>Out</span>` +
-        `<span><i class="kz-key kz-key--hr"></i>Home run</span><span><i class="kz-key kz-key--foul"></i>Foul</span></div>` : '<div class="kz-foot"><span>Fielders in position</span></div>';
-    const foot = `<div class="sf-note">${key}<span>High camera view &middot; generic outline: 330 ft down the lines, 400 to center</span></div>`;
+        `<span><i class="kz-key kz-key--hr"></i>Home run</span><span><i class="kz-key kz-key--foul"></i>Foul</span></div>` : '';
+    const foot = `<div class="sf-note">${key}</div>`;
     return `<div class="kz-card">${bar}<div class="sf-stage"><svg class="kz-svg" viewBox="0 0 ${SF.W} ${SF.H}" role="img" aria-label="${esc(aria)}">${SF.svg(sit, { kind })}</svg></div>${stats}${foot}</div>`;
   }
   function breakCardHtml(sit, v) {
@@ -6040,7 +6040,7 @@ function runGamePage() {
     try { fn(); } catch (err) {
       console.error(`Game page: ${label} failed`, err);
       const el = byId(label);
-      if (el) el.innerHTML = emptyMsg("Couldn't display this section.");
+      if (el) el.innerHTML = emptyMsg("Couldn't load.");
     }
   }
   async function main() {
@@ -6089,7 +6089,7 @@ function runGamePage() {
         await Promise.all(Array.from({ length: CONCURRENCY }, worker));
       }
     } catch (err) {
-      setStatus(statusEl, `Couldn't load this game right now (${err.message}). Try refreshing.`, true);
+      setStatus(statusEl, 'Couldn\'t load.', true);
       return;
     }
     if (!game && liveFeed) {
@@ -6097,7 +6097,7 @@ function runGamePage() {
       if (st === 'final') {
         game = feedToGame(liveFeed, await fetchWinProb(gamePk));
       } else if (st === 'preview') {
-        setStatus(statusEl, "This game hasn't started yet. Check back once it's underway.");
+        setStatus(statusEl, "Not started.");
         return;
       } else if (st === 'other') {
         setStatus(statusEl, 'This game was postponed, suspended or cancelled.');
@@ -6105,7 +6105,7 @@ function runGamePage() {
       }
     }
     if (!game) {
-      setStatus(statusEl, `No game found with id "${gamePk}"${year ? ` in ${year}` : ''}.`, true);
+      setStatus(statusEl, `Not found.${year ? ` in ${year}` : ''}.`, true);
       return;
     }
     venueRef.year = year ? Number(year) : null;
@@ -6235,7 +6235,7 @@ function runGamePage() {
             list.map((r) => `<li class="pv-row">${whoHtml(r, esc(r.pos || ''), pvSub(r), 'pv-who')}</li>`).join('') + `</ul>`;
         }).join('');
       }
-      if (!body) body = emptyMsg("The roster isn't available right now.");
+      if (!body) body = emptyMsg("Not available.");
     }
     return `<div class="pv-team pv-team--${team.side}">${head}${body}</div>`;
   }
@@ -6616,9 +6616,8 @@ function runGamePage() {
       items.push(`<li class="lv-ev${p.sc ? ' is-scoring' : ''}"><span class="lv-ev__when">${p.t === 0 ? '\u25b2' : '\u25bc'} ${esc(p.in)}</span>` +
         `<span class="lv-ev__txt">${esc(p.d || p.ev || '')}</span></li>`);
     }
-    const body = items.length ? `<ul class="lv-feed">${items.join('')}</ul>` : emptyMsg('Waiting for the first play.');
-    return `<div class="lv-card lv-card--feed"><h3 class="lv-card__title">Live play-by-play</h3>${body}` +
-      `<p class="lv-note">Updates automatically. The Plays tab has the full game log.</p></div>`;
+    const body = items.length ? `<ul class="lv-feed">${items.join('')}</ul>` : '';
+    return `<div class="lv-card lv-card--feed"><h3 class="lv-card__title">Live play-by-play</h3>${body}</div>`;
   }
   function renderLive(game, v) {
     const panel = byId('live-panel');
@@ -6870,7 +6869,7 @@ function runGamePage() {
       infoHtml(v);
   }
   function linescoreHtml(game, v) {
-    if (!game.ls) return emptyMsg('No linescore available for this game.');
+    if (!game.ls) return emptyMsg('');
     const cols = Math.max(9, v.innings);
     let head = `<thead><tr><th class="left">Team</th>`;
     for (let i = 1; i <= cols; i++) head += `<th>${i}</th>`;
@@ -6956,7 +6955,7 @@ function runGamePage() {
     if (v.plays.length === 0) return '';
     const scoring = v.plays.filter(p => p && p.sc);
     if (scoring.length === 0) {
-      return section('Scoring summary', emptyMsg(v.live ? 'No runs scored yet.' : 'No scoring plays recorded.'));
+      return section('Scoring summary', emptyMsg(v.live ? '' : ''));
     }
     const groups = new Map();
     for (const p of scoring) {
@@ -7068,7 +7067,7 @@ function runGamePage() {
   }
   function teamBoxHtml(team, v) {
     const d = team.data;
-    if (!d) return emptyMsg(`No box score available for the ${team.nick}.`);
+    if (!d) return emptyMsg('');
     const tot = v.lsTot(team.side);
     const kpiVals = [['Runs', v.runs[team.side]], ['Hits', numOrNull(tot[1])], ['Errors', numOrNull(tot[2])], ['LOB', numOrNull(tot[3])]]
       .filter(([, x]) => x !== null);
@@ -7122,7 +7121,7 @@ function runGamePage() {
     const root = byId('g-box');
     const v = view;
     if (!v.away.data && !v.home.data) {
-      root.innerHTML = emptyMsg('No box score available for this game.');
+      root.innerHTML = emptyMsg('');
       return;
     }
     const btn = (team) => {
@@ -7237,7 +7236,7 @@ function runGamePage() {
   }
   function renderStats(v) {
     if (!v.away.data && !v.home.data && !v.innings && !v.plays.length) {
-      return emptyMsg('No statistics available for this game.');
+      return emptyMsg('');
     }
     const A = sideStats(v, 'a'), H = sideStats(v, 'h');
     const tr = trackingOf(v);
@@ -7299,7 +7298,7 @@ function runGamePage() {
     `</div>`;
     const runs = runsChartHtml(v);
     const body = (runs ? `<h3 class="sub-heading gx-sub">Runs by inning</h3>${runs}` : '') + batting + pitching + tracking + contact;
-    return body ? legend + body : emptyMsg('No statistics available for this game.');
+    return body ? legend + body : emptyMsg('');
   }
   const HIT_RE = /^(single|double|triple|home run)$/i;
   function formatHit(hd) {
@@ -7360,7 +7359,7 @@ function runGamePage() {
     const root = byId('g-plays');
     const v = view;
     if (!v.plays.length) {
-      root.innerHTML = emptyMsg('No play-by-play data available for this game.');
+      root.innerHTML = emptyMsg('');
       return;
     }
     const innings = [...new Set(v.plays.map(p => numOrNull(p.in)).filter(x => x !== null))].sort((a, b) => a - b);
@@ -7388,7 +7387,7 @@ function runGamePage() {
     let list = v.plays.filter(passes);
     if (ui.playInning !== 'all') list = list.filter(p => Number(p.in) === Number(ui.playInning));
     if (!list.length) {
-      root.innerHTML = controls + emptyMsg('No plays match this filter.');
+      root.innerHTML = controls + emptyMsg('');
       return;
     }
     const groups = [];
@@ -7697,9 +7696,9 @@ function runGamePage() {
     if (!root || !f.open || !v) return;
     if (!f.balls.length) {
       if (f.status === 'idle' || f.status === 'loading') { root.innerHTML = loaderBlockHtml(); return; }
-      if (f.status === 'error') { root.innerHTML = emptyMsg(`Couldn't load batted-ball locations (${f.err}).`); return; }
+      if (f.status === 'error') { root.innerHTML = emptyMsg('Couldn\'t load.'); return; }
       root.innerHTML = emptyMsg(v.live
-        ? 'No balls in play yet.'
+        ? ''
         : 'MLB has no hit-location data for this game. Locations are only tracked for more recent seasons.');
       return;
     }
@@ -7753,7 +7752,7 @@ function runGamePage() {
     const sub = shown.length === f.balls.length
       ? `${f.balls.length} ball${f.balls.length === 1 ? '' : 's'} in play${v.live ? ' so far' : ''}`
       : `${shown.length} of ${f.balls.length} shown`;
-    const empty = shown.length === 0 ? `<div class="gf-empty">No balls match this filter.</div>` : '';
+    const empty = shown.length === 0 ? `<div class="gf-empty"></div>` : '';
     const scene = `<svg class="hm-svg" viewBox="0 0 ${LiveKit.SF.W} ${LiveKit.SF.H}" preserveAspectRatio="xMidYMid meet" role="img" ` +
       `aria-label="Baseball field seen from a high camera behind home plate, showing where each ball in play went">${LiveKit.SF.svg(null)}</svg>`;
     root.innerHTML = controls +
@@ -7828,7 +7827,7 @@ function runGamePage() {
     const v = view, game = current;
     const pts = (Array.isArray(game.wp) ? game.wp : []).filter(p => Array.isArray(p) && numOrNull(p[1]) !== null);
     if (pts.length < 2) {
-      root.innerHTML = emptyMsg('No win probability data available for this game.');
+      root.innerHTML = emptyMsg('');
       return;
     }
     const maxRaw = Math.max(...pts.map(p => Number(p[1])));
@@ -8144,7 +8143,7 @@ function runSearchPage() {
       players = p;
       managers = m;
     } catch (err) {
-      setStatus(statusEl, `Couldn't load the archive right now (${err.message}). Try refreshing.`, true);
+      setStatus(statusEl, `Couldn't load.`, true);
       return;
     }
     if (teams.length + players.length + managers.length === 0) {
@@ -8197,7 +8196,7 @@ function runSearchPage() {
       }
       if (total === 0) {
         hintEl.textContent = '';
-        resultsEl.innerHTML = `<p class="state-msg">No teams, players or managers match \u201C${escapeHtml(query.trim())}\u201D.</p>`;
+        resultsEl.innerHTML = `<p class="state-msg"></p>`;
       } else {
         hintEl.textContent = `${total.toLocaleString('en-US')} ${total === 1 ? 'result' : 'results'} for \u201C${query.trim()}\u201D`;
       }
